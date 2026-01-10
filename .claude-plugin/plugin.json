@@ -1,0 +1,11 @@
+{
+  "name": "lean-collab",
+  "description": "Multi-agent collaborative theorem proving with LeanTree and Ensue Memory Network",
+  "version": "0.1.0",
+  "author": {
+    "name": "Sai Vegasena",
+    "email": "sai@ensue.dev"
+  },
+  "agents": ["./agents/decomposer.md", "./agents/lean-prover.md"],
+  "skills": ["./skills/lean-collab"]
+}
