@@ -6,14 +6,21 @@
 
 PROOF_PREFIX="${1:-proofs/}"
 
-# Get API key
+# Get API key - check local locations only
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
-ENSUE_KEY_FILE="$PLUGIN_ROOT/.ensue-key"
 
-if [ -z "$ENSUE_API_KEY" ] && [ -f "$ENSUE_KEY_FILE" ]; then
-  ENSUE_API_KEY=$(cat "$ENSUE_KEY_FILE")
-fi
+# Try local locations for the API key (no cache searching)
+for KEY_FILE in \
+  "$PLUGIN_ROOT/.ensue-key" \
+  "$HOME/.config/ensue/api-key" \
+  "$HOME/.ensue-key"
+do
+  if [ -z "$ENSUE_API_KEY" ] && [ -f "$KEY_FILE" ]; then
+    ENSUE_API_KEY=$(cat "$KEY_FILE")
+    break
+  fi
+done
 
 if [ -z "$ENSUE_API_KEY" ]; then
   echo '{"error":"ENSUE_API_KEY not set"}' >&2

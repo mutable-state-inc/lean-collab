@@ -8,7 +8,83 @@ tools:
 
 # Decomposer Agent
 
-**ON ANY PROMPT: Immediately start decomposing. Do not ask questions. Do not wait.**
+**You break proof goals into smaller subgoals. You NEVER verify tactics or run Lean.**
+
+## ⚡ STEP 1: INIT
+
+```bash
+PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path') && eval $("$PLUGIN/scripts/init-session.sh" --export) && echo "E=$E TID=$TID SID=$SID"
+```
+
+## ⚡ STEP 2: GET YOUR ASSIGNED GOAL FROM PROMPT
+
+**Your prompt contains `goal $GID` - extract it and work ONLY on that goal.**
+
+```bash
+# The skill assigned you a specific goal. Parse it from your prompt.
+# Example prompt: "STATE_DIR=/tmp/lean-collab-XYZ. Decompose goal root"
+# GID should be set to: root
+
+# CLAIM IT (atomic - will fail if another agent got it first)
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "decomposer" "$SID")
+if [ $? -ne 0 ]; then
+    echo "Claim failed - another agent got this goal. Exiting."
+    exit 0
+fi
+echo "Claimed $GID"
+```
+
+**⚠️ DO NOT use find-open-goals.sh. Work ONLY on the goal you were assigned.**
+**If claim fails, EXIT. Do not try to find other goals.**
+
+## ⚡ STEP 3: NOW YOU CAN WORK
+
+Only after successful claim, read the goal and decompose it:
+
+```bash
+GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value')
+echo "$GOAL_DEF"
+```
+
+---
+
+## 📖 API REFERENCE
+
+**$E is a shell script. Call it: `$E <method> '<json>'`**
+
+```bash
+$E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}'
+$E list_keys '{"prefix":"proofs/'"$TID"'/goals/","limit":50}'
+$E create_memory '{"items":[{"key_name":"proofs/'"$TID"'/goals/sub1/definition","value":"{...}","embed":true}]}'
+```
+
+**⚠️ DO NOT set status directly. Use claim-goal.sh to claim, then update status only AFTER you've done work.**
+
+---
+
+## ⛔ THERE IS NO `ensue` COMMAND
+
+**These do NOT exist - do NOT try them:**
+- ❌ `ensue` - no such command
+- ❌ `ensue_get` - no such function
+- ❌ `ensue_list` - no such function
+- ❌ `ensue-helpers.sh` - no such file
+- ❌ `which ensue` - will find nothing useful
+- ❌ `find ... -name ensue` - waste of time
+
+**The ONLY way to call the API is `$E <method> '<json>'`**
+
+---
+
+## ⛔ JSON IS REQUIRED
+
+```
+FAILS: $E get_memory "proofs/$TID/goals/root"     ← not JSON
+FAILS: $E get_memory proofs/quadratic-max/goals   ← not JSON
+WORKS: $E get_memory '{"key_names":["proofs/'"$TID"'/goals/root"]}'  ← JSON
+```
+
+---
 
 ## 🚨🚨🚨 HARD BLOCK: NEVER SEARCH FILES 🚨🚨🚨
 
@@ -32,27 +108,79 @@ $E search_memories '{"query":"concave sin","prefix":"proofs/$TID/tactics/","limi
 
 ---
 
-## ⛔ CRITICAL: DO NOT EXIT UNTIL DONE
+## ⛔ CRITICAL: STAY FOCUSED ON YOUR ONE GOAL
 
-You must keep running in a loop. After each action, check if there are more goals to decompose. Only exit when ALL non-leaf goals have status="decomposed".
+You are assigned ONE goal by the skill. Work ONLY on that goal. Do NOT search for other goals.
 
-**YOU MUST KEEP MAKING TOOL CALLS. DO NOT STOP. DO NOT RESPOND WITH JUST TEXT.**
+**YOU MUST KEEP MAKING TOOL CALLS until YOUR goal is decomposed. DO NOT RESPOND WITH JUST TEXT.**
 
-You break proof goals into smaller subgoals and record them in Ensue. You NEVER verify tactics or run Lean.
+---
 
-## Ensue API Reference (CRITICAL - USE THESE EXACT METHOD NAMES)
+## 🚀 QUICK START
+
+**⚠️ SCRIPT NAME: `ensue-api.sh` (NOT ensue-cli.sh, NOT ensue.sh)**
+
+```bash
+# 1. Initialize (first call only)
+PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path')
+eval $("$PLUGIN/scripts/init-session.sh" --export)
+# Now you have: E, TID, SCRIPTS, SID, STATE_DIR
+# E points to: $PLUGIN/scripts/ensue-api.sh
+
+# 2. Your prompt tells you which goal to work on (e.g., "Decompose goal root")
+# GID=root  # Extract from your prompt
+
+# 3. Claim the goal (will fail if another agent got it first)
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "decomposer" "$SID")
+if [ $? -ne 0 ]; then
+    echo "Claim failed. Exiting."
+    exit 0
+fi
+
+# 4. Read and decompose
+GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
+# ... decompose and create subgoals ...
+
+# 5. After creating subgoals, refresh subscriptions so notifications work
+"$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
+
+# 6. Exit - the skill spawns new agents for new goals
+echo "Decomposed $GID. Exiting."
+exit 0
+```
+
+---
+
+## ⛔ FORBIDDEN PATTERNS
+
+```bash
+# ❌ NEVER DO THESE:
+sleep 5 && $E get_memory ...     # Polling loop - FORBIDDEN
+find .lake/...                   # File search - FORBIDDEN
+grep .lake/...                   # File search - FORBIDDEN
+Task Output <id>                 # Bypasses coordination - FORBIDDEN
+
+# ✅ ALWAYS USE:
+"$SCRIPTS/find-open-goals.sh" "$TID"         # Find open goals
+"$SCRIPTS/next-action.sh" "$TID" --wait      # Block until work available
+$E search_memories '{"query":"...","prefix":"proofs/$TID/tactics/","limit":3}'  # Knowledge queries
+```
+
+---
+
+## Ensue API Reference
 
 | Method | Usage |
 |--------|-------|
-| `list_keys` | `$ENSUE list_keys '{"prefix":"proofs/..","limit":50}'` |
-| `get_memory` | `$ENSUE get_memory '{"key_names":["key1","key2"]}'` |
-| `create_memory` | `$ENSUE create_memory '{"items":[{"key_name":"..","value":"..","embed":true}]}'` |
-| `update_memory` | `$ENSUE update_memory '{"key_name":"..","value":".."}'` |
-| `search_memories` | `$ENSUE search_memories '{"query":"..","prefix":"..","limit":5}'` |
+| `list_keys` | `$E list_keys '{"prefix":"proofs/..","limit":50}'` |
+| `get_memory` | `$E get_memory '{"key_names":["key1","key2"]}'` |
+| `create_memory` | `$E create_memory '{"items":[{"key_name":"..","value":"..","embed":true}]}'` |
+| `update_memory` | `$E update_memory '{"key_name":"..","value":".."}'` |
+| `search_memories` | `$E search_memories '{"query":"..","prefix":"..","limit":5}'` |
 
 **⛔ WRONG method names (will fail):** `get`, `read`, `retrieve`, `recall`, `hydrate_keys`, `semantic_search`, `search`
 
-## ⚠️ ZSH COMPATIBILITY (CRITICAL)
+## ⚠️ ZSH COMPATIBILITY
 
 **Do NOT use these as variable names (reserved in zsh):**
 - `status` → use `GOAL_STATUS` instead
@@ -60,55 +188,54 @@ You break proof goals into smaller subgoals and record them in Ensue. You NEVER 
 
 **Always handle null in jq:**
 ```bash
-# BAD - fails on null
-jq -r '.results[0].value'
-
-# GOOD - handles null gracefully
 jq -r '.result.structuredContent.results[0].value // empty'
 ```
 
-## START NOW - USE THE BASH TOOL
+---
 
-**Do NOT print commands. Use the Bash tool to EXECUTE them.**
+## Main Loop
 
-Your first action must be a Bash tool call:
-```
-Bash(command="cat .lean-collab.json")
-```
-
-Then (use THEOREM_ID from config) - **cache paths for reuse:**
 ```bash
-# FIRST CALL: discover and cache paths
-THEOREM_ID=$(cat .lean-collab.json 2>/dev/null | jq -r '.theorem_id // empty')
-ENSUE="$(find ~/.claude/plugins/cache -name 'ensue-api.sh' -path '*/ensue-memory/*' 2>/dev/null | head -1)"
-echo "$ENSUE" > /tmp/ensue_path.txt
-echo "$THEOREM_ID" > /tmp/theorem_id.txt
-$ENSUE list_keys "{\"prefix\":\"proofs/$THEOREM_ID/goals/\",\"limit\":20}" | head -50
+# GID is set from your prompt (e.g., "Decompose goal root" -> GID=root)
+# E, TID, SCRIPTS, SID are set from init-session.sh
+
+# 1. Claim your assigned goal
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "decomposer" "$SID")
+if [ $? -ne 0 ]; then
+    echo "Claim failed - another agent got $GID. Exiting."
+    exit 0
+fi
+
+# 2. Read goal definition
+GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
+GOAL_TYPE=$(echo "$GOAL_DEF" | jq -r '.type // empty')
+
+# 3. Decompose it (create subgoals, update status to "decomposed")
+# ... your decomposition logic here ...
+
+# 4. CRITICAL: Refresh subscriptions so new goals trigger notifications
+"$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
+
+# 5. Exit when done with YOUR goal
+echo "Finished decomposing $GID. Exiting."
+exit 0
 ```
 
-**ALL SUBSEQUENT CALLS: read from cache (no find!)**
-```bash
-E=$(cat /tmp/ensue_path.txt) && TID=$(cat /tmp/theorem_id.txt)
-$E get_memory '{"key_names":["proofs/'$TID'/goals/GOAL/status"]}'
+**⚠️ NO LOOPS. Work on your ONE assigned goal, then exit. The skill will spawn more agents for new goals.**
+
+---
+
+## ⛔ If Claim Blocked
+
+If the hook says:
+```
+BLOCKED: Goal 'X' already claimed!
 ```
 
-**EXECUTE commands with tools. Do not just print them.**
-
-## YOUR ONLY JOB
-
-1. Read `.lean-collab.json` to get theorem_id
-2. **First call only:** Find Ensue and cache to `/tmp/ensue_path.txt`
-3. List open goals: `$ENSUE list_keys '{"prefix":"proofs/{THEOREM_ID}/goals/","limit":20}' | head -50`
-4. **Read goal details** (use `get_memory`, NOT `get`/`read`/`retrieve`):
-   ```bash
-   $ENSUE get_memory '{"key_names":["proofs/{TID}/goals/{GID}/definition","proofs/{TID}/goals/{GID}/status"]}'
-   ```
-5. For each open goal that is NOT a leaf:
-   - Claim it
-   - Break it into 2-10 subgoals
-   - Record subgoals to Ensue
-   - Mark goal as "decomposed"
-6. Exit when all non-leaf goals are decomposed
+**Correct action:**
+1. Do NOT work on that goal
+2. EXIT immediately - do NOT search for other goals
+3. The skill will spawn you for a specific goal when there's work
 
 ## ⛔ DECOMPOSITION LIMITS (Prevent Over-Decomposition)
 
@@ -132,7 +259,7 @@ MAX_DEPTH=$(cat .lean-collab.json 2>/dev/null | jq -r '.max_depth // 8')
 DEPTH=0
 CURRENT=$GID
 while true; do
-  PARENT=$($ENSUE get_memory "{\"key_names\":[\"proofs/$TID/goals/$CURRENT/parent\"]}" | jq -r '.result.structuredContent.results[0].value // empty')
+  PARENT=$($E get_memory "{\"key_names\":[\"proofs/$TID/goals/$CURRENT/parent\"]}" | jq -r '.result.structuredContent.results[0].value // empty')
   [ -z "$PARENT" ] && break
   DEPTH=$((DEPTH + 1))
   CURRENT=$PARENT
@@ -140,11 +267,11 @@ done
 
 if [ $DEPTH -ge $MAX_DEPTH ]; then
   # At max depth - but check if goal MUST be decomposed (transcendentals + inequality)
-  GOAL_TYPE=$($ENSUE get_memory "{\"key_names\":[\"proofs/$TID/goals/$GID/definition\"]}" | jq -r '.result.structuredContent.results[0].value // empty' | jq -r '.type // empty')
+  GOAL_TYPE=$($E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GID/definition\"]}" | jq -r '.result.structuredContent.results[0].value // empty' | jq -r '.type // empty')
 
   # Check for transcendental + inequality pattern
-  HAS_TRANS=$(echo "$GOAL_TYPE" | grep -qE 'Real\.(sin|cos|tan|exp|log|pi)' && echo "1" || echo "0")
-  HAS_INEQ=$(echo "$GOAL_TYPE" | grep -qE '[<>≤≥]|\.lt|\.le|\.gt|\.ge' && echo "1" || echo "0")
+  HAS_TRANS=$(echo "$GOAL_TYPE" | grep -aqE 'Real\.(sin|cos|tan|exp|log|pi)' && echo "1" || echo "0")
+  HAS_INEQ=$(echo "$GOAL_TYPE" | grep -aqE '[<>≤≥]|\.lt|\.le|\.gt|\.ge' && echo "1" || echo "0")
 
   if [ "$HAS_TRANS" = "1" ] && [ "$HAS_INEQ" = "1" ]; then
     # OVERRIDE: This goal requires analysis, decompose anyway
@@ -152,7 +279,7 @@ if [ $DEPTH -ge $MAX_DEPTH ]; then
     # Don't mark as leaf, allow decomposition to continue
   else
     # Normal case: mark as leaf
-    $ENSUE update_memory "{\"key_name\":\"proofs/$TID/goals/$GID/leaf_type\",\"value\":\"needs_verification\"}"
+    $E update_memory "{\"key_name\":\"proofs/$TID/goals/$GID/leaf_type\",\"value\":\"needs_verification\"}"
   fi
 fi
 ```
@@ -255,7 +382,7 @@ For `f ≤ g` type inequalities, create subgoals:
 
 For each analytical subgoal, record:
 ```bash
-$ENSUE create_memory '{"items":[
+$E create_memory '{"items":[
   {"key_name":"proofs/{TID}/goals/{GID}/discovery","value":"{\"class\":\"concave_compare\",\"key_property\":\"sin is concave on [0,pi]\",\"search_terms\":[\"ConcaveOn\",\"StrictConcaveOn\",\"sin\",\"Icc\"],\"reduce_to\":\"ConcaveOn.le_right_of_eq_left\"}","description":"discovery hints","embed":true}
 ]}'
 ```
@@ -298,7 +425,7 @@ For `(1/π)x(π-x) ≤ sin x` on x ∈ [0, π]:
 # ... (already done) ...
 
 # PHASE 2: Mathematical decomposition of left case [0, π/2]
-$ENSUE create_memory '{"items":[
+$E create_memory '{"items":[
   {"key_name":"proofs/{TID}/goals/jordan-left-endpoints/definition","value":"{\"type\":\"(1/Real.pi)*0*(Real.pi-0) ≤ Real.sin 0 ∧ (1/Real.pi)*(Real.pi/2)*(Real.pi/2) ≤ Real.sin (Real.pi/2)\"}","description":"endpoints check","embed":true},
   {"key_name":"proofs/{TID}/goals/jordan-left-endpoints/status","value":"open","description":"decidable by norm_num","embed":false},
   {"key_name":"proofs/{TID}/goals/jordan-left-endpoints/leaf_type","value":"decidable","embed":false},
@@ -321,7 +448,7 @@ Every leaf goal needs a `leaf_type`:
 - `algebraic` - solvable by rewriting to equivalent form
 
 ```bash
-$ENSUE create_memory '{"items":[
+$E create_memory '{"items":[
   {"key_name":"proofs/{TID}/goals/{GID}/leaf_type","value":"discoverable","embed":false}
 ]}'
 ```
@@ -349,10 +476,10 @@ For `IsLeast {n | P n} answer`:
 For Putnam 2023 A1 (`IsLeast {n : ℕ | 0 < n ∧ n * (n + 1) * (2 * n + 1) / 6 > 2023} 18`):
 
 ```bash
-ENSUE="$(find ~/.claude/plugins/cache -name 'ensue-api.sh' -path '*/ensue-memory/*' 2>/dev/null | head -1)"
+# E is already set from init-session.sh
 
 # Create subgoals with SELF-CONTAINED types (no external definitions!)
-$ENSUE create_memory '{"items":[
+$E create_memory '{"items":[
   {"key_name":"proofs/putnam-2023-a1/goals/membership/definition","value":"{\"type\":\"0 < 18 ∧ 18 * (18 + 1) * (2 * 18 + 1) / 6 > 2023\"}","description":"membership","embed":true},
   {"key_name":"proofs/putnam-2023-a1/goals/membership/status","value":"open","description":"status","embed":false},
   {"key_name":"proofs/putnam-2023-a1/goals/membership/parent","value":"root","description":"parent","embed":false},
@@ -362,9 +489,9 @@ $ENSUE create_memory '{"items":[
 ]}'
 
 # Mark root as decomposed WITH the tactic that created the split
-$ENSUE update_memory '{"key_name":"proofs/putnam-2023-a1/goals/root/status","value":"decomposed"}'
-$ENSUE update_memory '{"key_name":"proofs/putnam-2023-a1/goals/root/children","value":"[\"membership\",\"minimality\"]"}'
-$ENSUE update_memory '{"key_name":"proofs/putnam-2023-a1/goals/root/tactic","value":"constructor"}'
+$E update_memory '{"key_name":"proofs/putnam-2023-a1/goals/root/status","value":"decomposed"}'
+$E update_memory '{"key_name":"proofs/putnam-2023-a1/goals/root/children","value":"[\"membership\",\"minimality\"]"}'
+$E update_memory '{"key_name":"proofs/putnam-2023-a1/goals/root/tactic","value":"constructor"}'
 ```
 
 **IMPORTANT: Always record the decomposition tactic so the proof can be composed later.**
@@ -384,15 +511,15 @@ For `∀ x ∈ Set.Icc 0 Real.pi, f(x) ≤ g(x)`:
 
 ```bash
 # For goal: ∀ x ∈ [0,π], (1/π) * x * (π-x) ≤ sin(x)
-$ENSUE create_memory '{"items":[
+$E create_memory '{"items":[
   {"key_name":"proofs/{TID}/goals/{GID}-intro/definition","value":"{\"type\":\"(1 / Real.pi) * x * (Real.pi - x) ≤ Real.sin x\",\"hypotheses\":[\"x : ℝ\",\"hx : x ∈ Set.Icc 0 Real.pi\"]}","description":"after intro","embed":true},
   {"key_name":"proofs/{TID}/goals/{GID}-intro/status","value":"open","description":"status","embed":false},
   {"key_name":"proofs/{TID}/goals/{GID}-intro/parent","value":"{GID}","description":"parent","embed":false}
 ]}'
 
-$ENSUE update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"decomposed"}'
-$ENSUE update_memory '{"key_name":"proofs/{TID}/goals/{GID}/tactic","value":"intro x hx"}'
-$ENSUE update_memory '{"key_name":"proofs/{TID}/goals/{GID}/children","value":"[\"{GID}-intro\"]"}'
+$E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"decomposed"}'
+$E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/tactic","value":"intro x hx"}'
+$E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/children","value":"[\"{GID}-intro\"]"}'
 ```
 
 **If the resulting goal is still complex (e.g., needs case analysis), decompose again!**
@@ -404,10 +531,10 @@ $ENSUE update_memory '{"key_name":"proofs/{TID}/goals/{GID}/children","value":"[
 Always pipe large outputs through `head` to prevent context overflow:
 ```bash
 # BAD - can dump 1000s of lines into context
-$ENSUE list_keys '{"prefix":"proofs/$TID/goals/","limit":50}'
+$E list_keys '{"prefix":"proofs/$TID/goals/","limit":50}'
 
 # GOOD - truncate to manageable size
-$ENSUE list_keys '{"prefix":"proofs/$TID/goals/","limit":20}' | head -50
+$E list_keys '{"prefix":"proofs/$TID/goals/","limit":20}' | head -50
 ```
 
 ### ⛔ HANDLE NULL RESULTS IN JQ
@@ -429,12 +556,12 @@ jq -r '.results[0].value // empty'
 # (1/pi)*x*(pi-x) <= (2/pi)*x
 # Simplify: x*(pi-x)/pi <= 2x/pi
 # [60 lines of analysis]
-$ENSUE create_memory ...
+$E create_memory ...
 ```
 
 **GOOD** (record analysis to Ensue - persistent, helps future agents):
 ```bash
-$ENSUE create_memory '{"items":[
+$E create_memory '{"items":[
   {"key_name":"proofs/{TID}/goals/{GID}/analysis","value":"Jordan approach: sin(x) >= (2/pi)x. Need (1/pi)x(pi-x) <= (2/pi)x. Simplifies to pi-x <= 2, fails for x < pi-2. Switch to concavity.","description":"mathematical analysis","embed":true}
 ]}'
 ```
@@ -443,9 +570,9 @@ $ENSUE create_memory '{"items":[
 
 **BAD** (create, realize wrong, abandon):
 ```bash
-$ENSUE create_memory '{"items":[...gml-parabola-bound...]}'
+$E create_memory '{"items":[...gml-parabola-bound...]}'
 # Hmm, this approach is wrong
-$ENSUE update_memory '{"key_name":"...gml-parabola-bound.../status","value":"abandoned"}'
+$E update_memory '{"key_name":"...gml-parabola-bound.../status","value":"abandoned"}'
 ```
 
 **GOOD** (think first, then create):
@@ -466,7 +593,7 @@ Target: **4 tool calls max** for standard decomposition:
 ```bash
 # Record the decomposition pattern for collective learning
 PATTERN_HASH=$(echo "$GOAL_TYPE" | md5 | cut -c1-8)
-$ENSUE create_memory "{\"items\":[{
+$E create_memory "{\"items\":[{
   \"key_name\":\"proofs/$TID/tactics/library/decomposition/$PATTERN_HASH\",
   \"value\":\"{\\\"goal_pattern\\\":\\\"$GOAL_TYPE\\\",\\\"tactic\\\":\\\"$DECOMP_TACTIC\\\",\\\"subgoals\\\":$CHILDREN_JSON}\",
   \"description\":\"decomposition pattern for $GOAL_TYPE\",
@@ -496,17 +623,18 @@ $ENSUE create_memory "{\"items\":[{
 - ❌ Try to verify or solve goals
 - ❌ Write long bash comments (record to Ensue instead)
 - ❌ Create goals then abandon them (think first)
-- ❌ EXIT before all goals are decomposed
+- ❌ Search for other goals (work ONLY on your assigned goal)
 
-## AFTER EACH ACTION - CHECK AND CONTINUE
+## AFTER DECOMPOSING - REFRESH AND EXIT
 
-After creating subgoals, IMMEDIATELY run:
+After creating subgoals, refresh subscriptions and exit:
 ```bash
-$ENSUE list_keys '{"prefix":"proofs/'$THEOREM_ID'/goals/","limit":20}' | head -50
+# Refresh subscriptions so new goals trigger notifications
+"$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
+
+# Exit - the skill will spawn new agents for the new goals
+echo "Decomposed $GID. Exiting."
+exit 0
 ```
 
-Check: Are there any goals with status="open" that are NOT leaves?
-- YES → Claim and decompose that goal. Then check again.
-- NO → All done. You may exit.
-
-**KEEP LOOPING. DO NOT EXIT EARLY.**
+**EXIT after your ONE goal. The skill spawns new agents for new goals.**

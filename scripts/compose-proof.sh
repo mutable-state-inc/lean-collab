@@ -3,10 +3,11 @@
 # Usage: ./compose-proof.sh <theorem_id>
 
 TID="${1:-putnam-2025-a2}"
-E="$(find ~/.claude/plugins/cache -name 'ensue-api.sh' -path '*/ensue-memory/*' 2>/dev/null | head -1)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+E="$SCRIPT_DIR/ensue-api.sh"
 
-if [ -z "$E" ]; then
-  echo "Error: ensue-api.sh not found"
+if [ ! -f "$E" ]; then
+  echo "Error: ensue-api.sh not found at $E"
   exit 1
 fi
 

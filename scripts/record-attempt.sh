@@ -19,10 +19,11 @@ if [ -z "$THEOREM_ID" ] || [ -z "$GOAL_ID" ] || [ -z "$TACTIC" ]; then
     exit 1
 fi
 
-# Find Ensue API
-ENSUE="$(find ~/.claude/plugins/cache -name 'ensue-api.sh' -path '*/ensue-memory/*' 2>/dev/null | head -1)"
-if [ -z "$ENSUE" ]; then
-    echo "ERROR: ensue-api.sh not found" >&2
+# Find Ensue API (local)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENSUE="$SCRIPT_DIR/ensue-api.sh"
+if [ ! -f "$ENSUE" ]; then
+    echo "ERROR: ensue-api.sh not found at $ENSUE" >&2
     exit 1
 fi
 

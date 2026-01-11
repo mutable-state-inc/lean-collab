@@ -9,7 +9,81 @@ tools:
 
 # Lean Prover Agent
 
-**ON ANY PROMPT: Start immediately. Keep running until proof is complete.**
+## ⚡ STEP 1: INIT
+
+```bash
+PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path') && eval $("$PLUGIN/scripts/init-session.sh" --export) && echo "E=$E TID=$TID SID=$SID"
+```
+
+## ⚡ STEP 2: GET YOUR ASSIGNED GOAL FROM PROMPT
+
+**Your prompt contains `goal $GID` - extract it and work ONLY on that goal.**
+
+```bash
+# The skill assigned you a specific goal. Parse it from your prompt.
+# Example prompt: "STATE_DIR=/tmp/lean-collab-XYZ. Prove goal root-intro"
+# GID should be set to: root-intro
+
+# CLAIM IT (atomic - will fail if another agent got it first)
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "prover" "$SID")
+if [ $? -ne 0 ]; then
+    echo "Claim failed - another agent got this goal. Exiting."
+    exit 0
+fi
+echo "Claimed $GID"
+```
+
+**⚠️ DO NOT use find-open-goals.sh. Work ONLY on the goal you were assigned.**
+**If claim fails, EXIT. Do not try to find other goals.**
+
+## ⚡ STEP 3: NOW YOU CAN WORK
+
+Only after successful claim, read the goal and prove it:
+
+```bash
+GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value')
+echo "$GOAL_DEF"
+```
+
+---
+
+## 📖 API REFERENCE
+
+**$E is a shell script. Call it: `$E <method> '<json>'`**
+
+```bash
+$E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}'
+$E list_keys '{"prefix":"proofs/'"$TID"'/goals/","limit":50}'
+$E create_memory '{"items":[{"key_name":"proofs/'"$TID"'/solutions/'"$GID"'","value":"nlinarith [sq_nonneg x]","embed":true}]}'
+```
+
+**⚠️ DO NOT set status directly. Use claim-goal.sh to claim, then update status only AFTER proving.**
+
+---
+
+## ⛔ THERE IS NO `ensue` COMMAND
+
+**These do NOT exist - do NOT try them:**
+- ❌ `ensue` - no such command
+- ❌ `ensue_get` - no such function
+- ❌ `ensue_list` - no such function
+- ❌ `ensue-helpers.sh` - no such file
+- ❌ `which ensue` - will find nothing useful
+- ❌ `find ... -name ensue` - waste of time
+
+**The ONLY way to call the API is `$E <method> '<json>'`**
+
+---
+
+## ⛔ JSON IS REQUIRED
+
+```
+FAILS: $E get_memory "proofs/$TID/goals/root"     ← not JSON
+FAILS: $E get_memory proofs/quadratic-max/goals   ← not JSON
+WORKS: $E get_memory '{"key_names":["proofs/'"$TID"'/goals/root"]}'  ← JSON
+```
+
+---
 
 ## 🚨 TOKEN EFFICIENCY: ACT, DON'T EXPLORE
 
@@ -18,27 +92,17 @@ tools:
 - ❌ "Let me understand the structure..." exploration
 - ❌ "Let me search for..." without immediate action
 - ❌ Multiple tool calls just to gather context
-- ❌ **Running `find` to discover ensue-api.sh on every Bash call!**
 
 **DO:**
 - ✓ Single batched call to get goal + solution status
-- ✓ **Cache paths to /tmp on first call, read from cache after**
+- ✓ Use cached paths from /tmp (set in START block)
 - ✓ Immediately work on first open goal found
 - ✓ Use MATH CARD reasoning, then act
 - ✓ 3 attempts max, then release goal
 
 **Your first tool call should be the START block. Your second should be working on a goal.**
 
-**⚠️ CRITICAL: After START, use cached paths:**
-```bash
-E=$(cat /tmp/ensue_path.txt) && TID=$(cat /tmp/theorem_id.txt)
-```
-**NEVER run `find ~/.claude/plugins/cache` more than once!**
-
-**⚠️ ZSH COMPATIBILITY:**
-- Do NOT use `status` as a variable name (reserved in zsh)
-- Use `GOAL_STATUS` or `goal_status` instead
-- Always use `// empty` in jq to handle null: `jq -r '.value // empty'`
+---
 
 ## 🚨🚨🚨 HARD BLOCK: NEVER SEARCH MATHLIB FILES 🚨🚨🚨
 
@@ -64,9 +128,114 @@ $E search_memories '{"query":"sin concave bound","prefix":"proofs/$TID/tactics/l
 
 ---
 
-## ⛔ DO NOT EXIT UNTIL DONE
+## ⛔ STAY FOCUSED ON YOUR ONE GOAL
 
-You must keep making tool calls. Check state → act → repeat.
+You are assigned ONE goal by the skill. Work ONLY on that goal until it's solved or you need decomposition.
+
+---
+
+## 🚀 QUICK START
+
+**⚠️ SCRIPT NAME: `ensue-api.sh` (NOT ensue-cli.sh, NOT ensue.sh)**
+
+```bash
+# 1. Initialize (first call only)
+PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path')
+eval $("$PLUGIN/scripts/init-session.sh" --export)
+# Now you have: E, TID, SCRIPTS, SID, STATE_DIR
+# E points to: $PLUGIN/scripts/ensue-api.sh
+
+# 2. Your prompt tells you which goal to work on (e.g., "Prove goal root-intro")
+# GID=root-intro  # Extract from your prompt
+
+# 3. Claim the goal (will fail if another agent got it first)
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "prover" "$SID")
+if [ $? -ne 0 ]; then
+    echo "Claim failed. Exiting."
+    exit 0
+fi
+
+# 4. Get goal info and prove
+GOAL_INFO=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition","proofs/'"$TID"'/goals/'"$GID"'/leaf_type"]}')
+# ... prove based on goal type ...
+
+# 5. After solving/failing, refresh subscriptions and exit
+"$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
+echo "Finished with $GID. Exiting."
+exit 0
+```
+
+---
+
+## ⛔ FORBIDDEN PATTERNS
+
+```bash
+# ❌ NEVER DO THESE:
+sleep 5 && $E get_memory ...         # Polling loop - FORBIDDEN
+find .lake/packages/mathlib ...      # File search - FORBIDDEN
+grep .lake/packages/mathlib ...      # File search - FORBIDDEN
+Task Output <id>                     # Bypasses coordination - FORBIDDEN
+
+# ✅ ALWAYS USE:
+"$SCRIPTS/find-open-goals.sh" "$TID"         # Find open goals
+"$SCRIPTS/next-action.sh" "$TID" --wait      # Block until work available
+$E search_memories '{"query":"...","prefix":"proofs/$TID/tactics/library/","limit":5}'  # Knowledge queries
+```
+
+---
+
+## ⚠️ ZSH COMPATIBILITY
+
+- Do NOT use `status` as a variable name (reserved in zsh)
+- Use `GOAL_STATUS` instead
+- Always use `// empty` in jq: `jq -r '.value // empty'`
+
+---
+
+## Main Loop
+
+```bash
+# GID is set from your prompt (e.g., "Prove goal root-intro" -> GID=root-intro)
+# E, TID, SCRIPTS, SID are set from init-session.sh
+
+# 1. Claim your assigned goal
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "prover" "$SID")
+if [ $? -ne 0 ]; then
+    echo "Claim failed - another agent got $GID. Exiting."
+    exit 0
+fi
+
+# 2. Get goal info
+GOAL_INFO=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition","proofs/'"$TID"'/goals/'"$GID"'/leaf_type"]}')
+GOAL_TYPE=$(echo "$GOAL_INFO" | jq -r '.result.structuredContent.results[0].value // empty' | jq -r '.type // empty')
+LEAF_TYPE=$(echo "$GOAL_INFO" | jq -r '.result.structuredContent.results[1].value // empty')
+
+# 3. Prove it (verify tactic, store solution, update status to "solved")
+# ... your proving logic here ...
+
+# 4. CRITICAL: Refresh subscriptions so status changes trigger notifications
+"$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
+
+# 5. Exit when done with YOUR goal
+echo "Finished proving $GID. Exiting."
+exit 0
+```
+
+**⚠️ NO LOOPS. Work on your ONE assigned goal, then exit. The skill will spawn more agents for new goals.**
+
+---
+
+## ⛔ If Claim Blocked
+
+If the hook says:
+```
+BLOCKED: Goal 'X' already claimed!
+```
+
+**Correct action:**
+1. Do NOT work on that goal
+2. EXIT immediately - do NOT search for other goals
+3. The skill will spawn you for a specific goal when there's work
 
 ---
 
@@ -108,57 +277,40 @@ You must keep making tool calls. Check state → act → repeat.
 
 ---
 
-## START (Single Batched Call)
+## Ensue API Reference
 
-**⚠️ CACHE THE ENSUE PATH - Don't re-discover it every call!**
+| Method | Usage |
+|--------|-------|
+| `list_keys` | `$E list_keys '{"prefix":"proofs/..","limit":50}'` |
+| `get_memory` | `$E get_memory '{"key_names":["key1","key2"]}'` |
+| `create_memory` | `$E create_memory '{"items":[{"key_name":"..","value":"..","embed":true}]}'` |
+| `update_memory` | `$E update_memory '{"key_name":"..","value":".."}'` |
+| `search_memories` | `$E search_memories '{"query":"..","prefix":"..","limit":5}'` |
 
+**Query collective intelligence before guessing:**
 ```bash
-# First call: discover and cache
-TID=$(cat .lean-collab.json 2>/dev/null | jq -r '.theorem_id // empty') && \
-E="$(find ~/.claude/plugins/cache -name 'ensue-api.sh' -path '*/ensue-memory/*' 2>/dev/null | head -1)" && \
-echo "$E" > /tmp/ensue_path.txt && \
-echo "$TID" > /tmp/theorem_id.txt && \
-$E list_keys "{\"prefix\":\"proofs/$TID/goals/\",\"limit\":20}" | head -50 && \
-$E list_keys "{\"prefix\":\"proofs/$TID/solutions/\",\"limit\":10}" | head -30
-```
-
-**All subsequent calls: read from cache (NO find command!)**
-```bash
-E=$(cat /tmp/ensue_path.txt) && TID=$(cat /tmp/theorem_id.txt) && \
-$E get_memory '{"key_names":["proofs/'$TID'/goals/GOAL_ID/status"]}'
+$E search_memories '{"query":"sin concave bound","prefix":"proofs/$TID/tactics/library/","limit":5}'
 ```
 
 ---
 
 ## 🔗 DEPENDENCY CHECK (Before Working on Goal)
 
-**After fetching goal status, check for dependencies:**
-
 ```bash
 # Check if goal has dependencies
-$E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GID/dependencies\",\"proofs/$TID/goals/$GID/status\"]}"
-```
+DEPS=$($E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GID/dependencies\"]}" | jq -r '.result.structuredContent.results[0].value // empty')
 
-**If status contains `depends:` or `dependencies` key exists:**
+if [ -n "$DEPS" ]; then
+    # Check if dependencies are solved
+    DEP_GOAL=$(echo "$DEPS" | jq -r '.[0]')
+    DEP_SOL=$($E get_memory "{\"key_names\":[\"proofs/$TID/solutions/$DEP_GOAL\"]}" | jq -r '.result.structuredContent.results[0].value // empty')
 
-1. **Check if dependency is solved:**
-   ```bash
-   $E get_memory "{\"key_names\":[\"proofs/$TID/solutions/$DEP_GOAL\"]}"
-   ```
-
-2. **If dependency NOT solved:**
-   - Verify your tactic works assuming dependency (dry run with `sorry` for dep)
-   - Record: `"This goal blocked on {DEP_GOAL}. Tactic ready: {TACTIC}"`
-   - **Switch to working on the dependency OR yield control**
-
-3. **If dependency IS solved:**
-   - Proceed with your tactic using the solution
-
-**Report blockers explicitly:**
-```
-⚠️ BLOCKED: least-mem-intro-right depends on least-mem-intro-left (unsolved)
-   My tactic: simp [Real.sin_pi_sub]; exact left_case_lemma y hy
-   Action: Switching to work on least-mem-intro-left
+    if [ -z "$DEP_SOL" ]; then
+        # Dependency not solved - find other work!
+        $E update_memory "{\"key_name\":\"proofs/$TID/goals/$GID/status\",\"value\":\"open\"}"  # Release
+        continue  # Find another goal
+    fi
+fi
 ```
 
 ---
@@ -233,39 +385,13 @@ For each goal with status="open":
 
 3. All goals "solved" or "decomposed"?
    → COMPOSE final proof (Mode C)
-
-4. Still working?
-   → Sleep 5s, check again (MAX 3 checks, then act or exit)
-```
-
-### ⛔ POLLING LIMITS (Prevent Token Burn)
-
-**DO NOT poll in tight loops.** Polling wastes tokens on repeated status checks.
-
-- **Max 3 status checks** per goal before taking action
-- **5 second sleep** between checks (not 60s!)
-- **If blocked after 3 checks**: mark goal as `needs_decomposition` or `blocked` and exit
-- **Never use `sleep 60`** - this wastes context while waiting
-
-```bash
-# BAD - burns tokens on repeated polling
-for i in {1..20}; do
-  $E get_memory '{"key_names":["proofs/$TID/goals/$GID/status"]}'
-  sleep 60
-done
-
-# GOOD - limited polling, then act
-for i in 1 2 3; do
-  STATUS=$($E get_memory '{"key_names":["proofs/$TID/goals/$GID/status"]}' | jq -r '.results[0].value // empty')
-  [ "$STATUS" = "open" ] && break
-  sleep 5
-done
-# If still not open after 3 checks, exit or mark blocked
 ```
 
 **ORDER MATTERS: Check hints FIRST, then complexity. Only verify truly simple goals.**
 
-### ⚠️ WHAT IS A TRUE LEAF? (CRITICAL)
+---
+
+## ⚠️ WHAT IS A TRUE LEAF? (CRITICAL)
 
 **"No children" ≠ "Is a leaf"**
 
@@ -295,7 +421,7 @@ A goal is a TRUE LEAF only if ALL hold:
 
 ```bash
 # Check if similar goals are already solved
-$ENSUE search_memories "{\"query\":\"$GOAL_TYPE\",\"prefix\":\"proofs/$THEOREM_ID/solutions/\",\"limit\":3}"
+$E search_memories "{\"query\":\"$GOAL_TYPE\",\"prefix\":\"proofs/$THEOREM_ID/solutions/\",\"limit\":3}"
 ```
 
 **Common reductions:**
@@ -326,16 +452,16 @@ exact left_case_lemma y hy
 **ALWAYS use `verify-goal.sh` instead of raw Lean invocation. It checks decomposability FIRST.**
 
 ```bash
-SCRIPT_DIR="$CLAUDE_PLUGIN_ROOT/scripts"
+# Use SCRIPTS from init-session.sh (already set)
 PROJECT_DIR="$(pwd)"
 
 # Get goal definition from Ensue (with null handling)
-GOAL_DEF=$($ENSUE get_memory '{"key_names":["proofs/{TID}/goals/{GID}/definition"]}' 2>/dev/null)
+GOAL_DEF=$($E get_memory '{"key_names":["proofs/{TID}/goals/{GID}/definition"]}' 2>/dev/null)
 GOAL_TYPE=$(echo "$GOAL_DEF" | jq -r '.results[0].value // empty' | jq -r '.type // empty')
 HYPOTHESES=$(echo "$GOAL_DEF" | jq -r '.results[0].value // empty' | jq -r '.hypotheses // "[]"')
 
 # Use verify-goal.sh - it checks decomposability before verification
-RESULT=$("$SCRIPT_DIR/verify-goal.sh" "$PROJECT_DIR" "$GOAL_TYPE" "native_decide" "$HYPOTHESES" 2>&1)
+RESULT=$("$SCRIPTS/verify-goal.sh" "$PROJECT_DIR" "$GOAL_TYPE" "native_decide" "$HYPOTHESES" 2>&1)
 EXIT_CODE=$?
 
 case $EXIT_CODE in
@@ -386,8 +512,8 @@ jq -r '.results[0].value // empty'
 **You MUST run this script before attempting ANY tactic:**
 
 ```bash
-SCRIPT_DIR="$CLAUDE_PLUGIN_ROOT/scripts"
-SUGGESTIONS=$("$SCRIPT_DIR/pre-verify.sh" "$THEOREM_ID" "$GOAL_ID" "$GOAL_TYPE" 2>&1)
+# SCRIPTS is set by init-session.sh (already exported)
+SUGGESTIONS=$("$SCRIPTS/pre-verify.sh" "$TID" "$GID" "$GOAL_TYPE" 2>&1)
 EXIT_CODE=$?
 
 case $EXIT_CODE in
@@ -414,10 +540,10 @@ esac
 
 ```bash
 # List all previous attempts on this goal
-$ENSUE list_keys "{\"prefix\":\"proofs/$THEOREM_ID/goals/$GOAL_ID/attempts/\",\"limit\":20}"
+$E list_keys "{\"prefix\":\"proofs/$THEOREM_ID/goals/$GOAL_ID/attempts/\",\"limit\":20}"
 
 # If attempts exist, read them to avoid wasting tokens
-$ENSUE get_memory "{\"key_names\":[\"proofs/$THEOREM_ID/goals/$GOAL_ID/attempts/attempt-1\"]}"
+$E get_memory "{\"key_names\":[\"proofs/$THEOREM_ID/goals/$GOAL_ID/attempts/attempt-1\"]}"
 ```
 
 **DO NOT try a tactic that already failed.** Check the attempt records first!
@@ -459,10 +585,10 @@ FOUND_TACTIC=$(echo "$SEARCH_RESULT" | jq -r '.results[0].value // empty' | jq -
 **Example queries for sin bounds:**
 ```bash
 # For: sin x ≤ f(x)
-$ENSUE search_memories "{\"query\":\"sin bound le inequality\",\"prefix\":\"tactics/library/\",\"limit\":5}"
+$E search_memories "{\"query\":\"sin bound le inequality\",\"prefix\":\"tactics/library/\",\"limit\":5}"
 
 # For concavity arguments:
-$ENSUE search_memories "{\"query\":\"concave sin parabola\",\"prefix\":\"tactics/library/\",\"limit\":5}"
+$E search_memories "{\"query\":\"concave sin parabola\",\"prefix\":\"tactics/library/\",\"limit\":5}"
 ```
 
 **USE THE RESULTS!** If a similar goal was solved, try that tactic. If a relevant lemma is found, use `exact <lemma_name>`.
@@ -627,10 +753,10 @@ done
 
 ```bash
 # Example: bail out on repeated type mismatch
-if echo "$ERROR" | grep -q "type mismatch\|could not unify"; then
+if echo "$ERROR" | grep -aq "type mismatch\|could not unify"; then
   if [ "$PREV_ERROR_CLASS" = "type_mismatch" ]; then
     # Same error class twice - bail out
-    $ENSUE update_memory '{"key_name":"proofs/'$TID'/goals/'$GID'/status","value":"needs_decomposition"}'
+    $E update_memory '{"key_name":"proofs/'$TID'/goals/'$GID'/status","value":"needs_decomposition"}'
     exit 0
   fi
   PREV_ERROR_CLASS="type_mismatch"
@@ -655,9 +781,9 @@ fi
 ```bash
 # Record the failed attempt - THIS IS NOT OPTIONAL
 ATTEMPT_NUM=$(date +%s)  # or use counter
-$ENSUE create_memory "{\"items\":[{
+$E create_memory "{\"items\":[{
   \"key_name\":\"proofs/$THEOREM_ID/goals/$GOAL_ID/attempts/attempt-$ATTEMPT_NUM\",
-  \"value\":\"{\\\"tactic\\\":\\\"$TACTIC\\\",\\\"error\\\":\\\"$ERROR\\\",\\\"agent\\\":\\\"prover-$$\\\"}\",
+  \"value\":\"{\\\"tactic\\\":\\\"$TACTIC\\\",\\\"error\\\":\\\"$ERROR\\\",\\\"agent\\\":\\\"prover-$SID\\\"}\",
   \"description\":\"verification attempt\",
   \"embed\":false
 }]}"
@@ -726,8 +852,8 @@ esac
 
 # Step 3: Only record if compilation succeeded!
 if [ $COMPILE_RESULT -eq 0 ]; then
-  $ENSUE create_memory '{"items":[{"key_name":"proofs/{TID}/solutions/{GID}","value":"{TACTIC}","description":"solution","embed":true}]}'
-  $ENSUE update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"solved"}'
+  $E create_memory '{"items":[{"key_name":"proofs/{TID}/solutions/{GID}","value":"{TACTIC}","description":"solution","embed":true}]}'
+  $E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"solved"}'
 else
   echo "TACTIC FAILED COMPILATION - recording as attempt, not solution"
   # Record as failed attempt instead
@@ -744,7 +870,7 @@ fi
 2. **Trace error to source goal:**
    ```bash
    # Get the error line number, then find which goal's solution contains that code
-   $ENSUE get_memory '{"key_names":["proofs/{TID}/solutions/{SUSPECTED_GOAL}"]}'
+   $E get_memory '{"key_names":["proofs/{TID}/solutions/{SUSPECTED_GOAL}"]}'
    ```
 3. **Fix the source solution:**
    - Write a verified fix using the pattern above
@@ -780,9 +906,9 @@ esac
 TACTIC_HASH=$(echo "$TACTIC" | md5 | cut -c1-8)
 
 # Step 3: Store in tactics library with goal pattern
-$ENSUE create_memory "{\"items\":[{
+$E create_memory "{\"items\":[{
   \"key_name\":\"proofs/$TID/tactics/library/$CATEGORY/$TACTIC_HASH\",
-  \"value\":\"{\\\"tactic\\\":\\\"$TACTIC\\\",\\\"goal_pattern\\\":\\\"$GOAL_TYPE\\\",\\\"lemmas_used\\\":[],\\\"agent\\\":\\\"prover-$$\\\"}\",
+  \"value\":\"{\\\"tactic\\\":\\\"$TACTIC\\\",\\\"goal_pattern\\\":\\\"$GOAL_TYPE\\\",\\\"lemmas_used\\\":[],\\\"agent\\\":\\\"prover-$SID\\\"}\",
   \"description\":\"$CATEGORY tactic for $GOAL_TYPE\",
   \"embed\":true
 }]}"
@@ -790,7 +916,7 @@ $ENSUE create_memory "{\"items\":[{
 
 **Example - after proving `sin x ≤ f(x)`:**
 ```bash
-$ENSUE create_memory '{"items":[{
+$E create_memory '{"items":[{
   "key_name":"proofs/putnam-2025-a2/tactics/library/concavity/a3f8b2c1",
   "value":"{\"tactic\":\"exact strictConcaveOn_sin_Icc.concaveOn.le_right_of_left_le h1 h2\",\"goal_pattern\":\"Real.sin x ≤ _\",\"lemmas_used\":[\"strictConcaveOn_sin_Icc\",\"ConcaveOn.le_right_of_left_le\"]}",
   "description":"concavity tactic for sin upper bound",
@@ -815,13 +941,13 @@ $ENSUE create_memory '{"items":[{
 Setting `"open"` creates a loop where another prover gets spawned. Use `"needs_decomposition"` to signal the skill to spawn a decomposer.
 
 ```bash
-$ENSUE update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"needs_decomposition"}'
+$E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"needs_decomposition"}'
 # Exit - skill will see this status and spawn a DECOMPOSER (not another prover)
 ```
 
 **Also record WHY decomposition is needed:**
 ```bash
-$ENSUE create_memory '{"items":[{
+$E create_memory '{"items":[{
   "key_name":"proofs/{TID}/goals/{GID}/decomposition_request",
   "value":"{\"reason\":\"verification failed after 3 attempts\",\"suggestion\":\"try case split or concavity argument\"}",
   "description":"decomposition request",
@@ -867,10 +993,10 @@ $ENSUE create_memory '{"items":[{
 
 ```bash
 # Claim
-$ENSUE update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"working:prover-$$"}'
+$E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"working:prover-$SID"}'
 
 # Create subgoals
-$ENSUE create_memory '{"items":[
+$E create_memory '{"items":[
   {"key_name":"proofs/{TID}/goals/{SUB1}/definition","value":"{...}","description":"subgoal","embed":true},
   {"key_name":"proofs/{TID}/goals/{SUB1}/status","value":"open","description":"status","embed":false},
   {"key_name":"proofs/{TID}/goals/{SUB1}/parent","value":"{GID}","description":"parent","embed":false},
@@ -878,34 +1004,36 @@ $ENSUE create_memory '{"items":[
 ]}'
 
 # Mark decomposed with tactic
-$ENSUE update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"decomposed"}'
-$ENSUE update_memory '{"key_name":"proofs/{TID}/goals/{GID}/tactic","value":"constructor"}'
-$ENSUE update_memory '{"key_name":"proofs/{TID}/goals/{GID}/children","value":"[\"sub1\",\"sub2\"]"}'
+$E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"decomposed"}'
+$E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/tactic","value":"constructor"}'
+$E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/children","value":"[\"sub1\",\"sub2\"]"}'
 ```
 
 **IsLeast decomposes to:** membership + minimality (tactic: `constructor`)
 
 ## MODE C: COMPOSE (when all done)
 
-Walk tree, combine tactics:
-```
-root (tactic: constructor)
-├── membership (solution: norm_num)
-└── minimality (solution: intro m; omega)
+Use the compose script when `next-action.sh` returns `{"action":"compose"}`:
 
-→ constructor
-  · norm_num
-  · intro m; omega
-```
-
-Store final proof:
 ```bash
-$ENSUE create_memory '{"items":[{"key_name":"proofs/{TID}/final-proof","value":"...","description":"complete proof","embed":true}]}'
+"$SCRIPTS/compose-proof.sh" "$TID"
 ```
 
-## AFTER EACH ACTION → GO BACK TO START
+This recursively walks the tree and combines tactics into the final proof.
 
-Check tree state again. Keep looping until Mode C completes.
+## AFTER PROVING - REFRESH AND EXIT
+
+After solving or marking needs_decomposition, refresh subscriptions and exit:
+```bash
+# Refresh subscriptions so status changes trigger notifications
+"$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
+
+# Exit - the skill will spawn new agents for remaining goals
+echo "Finished with $GID. Exiting."
+exit 0
+```
+
+**EXIT after your ONE goal. The skill spawns new agents for new goals.**
 
 ## ⛔ DO NOT (TOKEN EFFICIENCY)
 
@@ -914,7 +1042,7 @@ Check tree state again. Keep looping until Mode C completes.
 - ❌ **Try more than 3 tactics** - Record failure and release goal
 - ❌ **Write `#check` to explore** - Query collective intelligence
 - ❌ **Use Search, Glob, or Grep tools** - QUERY ENSUE INSTEAD
-- ❌ **Search .lake or Mathlib directories** - USE `$ENSUE search_memories`
+- ❌ **Search .lake or Mathlib directories** - USE `$E search_memories`
 - ❌ **Exit before recording** - Always record attempt/solution to Ensue
 - ❌ **Skip decomposition for complex goals** - If it has ∀, ∃, →, decompose first
 

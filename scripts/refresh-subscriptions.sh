@@ -11,7 +11,21 @@ if [[ -z "$THEOREM_ID" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ENSUE_API="$SCRIPT_DIR/ensue-api.sh"
+
+# Find ensue-api.sh - prefer local, then cached path
+if [ -f "$SCRIPT_DIR/ensue-api.sh" ]; then
+  ENSUE_API="$SCRIPT_DIR/ensue-api.sh"
+elif [ -f /tmp/ensue_path.txt ]; then
+  ENSUE_API=$(cat /tmp/ensue_path.txt)
+else
+  echo '{"error":"ensue-api.sh not found - set plugin_path in .lean-collab.json"}' >&2
+  exit 1
+fi
+
+if [ -z "$ENSUE_API" ] || [ ! -f "$ENSUE_API" ]; then
+  echo '{"error":"ensue-api.sh not found"}' >&2
+  exit 1
+fi
 
 # List all goals
 GOALS_RESPONSE=$(bash "$ENSUE_API" list_keys "{\"prefix\":\"proofs/$THEOREM_ID/goals/\",\"limit\":200}")

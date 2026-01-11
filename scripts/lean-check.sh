@@ -32,8 +32,8 @@ if [[ -z "$PROJECT_DIR" || -z "$GOAL_TYPE" || -z "$TACTIC" ]]; then
     exit 2
 fi
 
-if [[ ! -f "$PROJECT_DIR/lakefile.lean" ]]; then
-    echo "Error: No lakefile.lean in $PROJECT_DIR" >&2
+if [[ ! -f "$PROJECT_DIR/lakefile.lean" && ! -f "$PROJECT_DIR/lakefile.toml" ]]; then
+    echo "Error: No lakefile in $PROJECT_DIR" >&2
     exit 2
 fi
 
@@ -41,18 +41,24 @@ fi
 VERIFY_DIR=$(mktemp -d)
 trap "rm -rf $VERIFY_DIR" EXIT
 
-# Build hypothesis declarations from JSON
-HYPOTHESIS_DECLS=""
+# Build hypothesis list for theorem signature
+HYPOTHESIS_SIG=""
 if [[ "$HYPOTHESES" != "[]" && "$HYPOTHESES" != "" ]]; then
-    # Parse JSON and convert to Lean variable declarations
-    # Format: [{"name": "n", "type": "Nat"}, {"name": "ih", "type": "n + m = m + n"}]
-    HYPOTHESIS_DECLS=$(echo "$HYPOTHESES" | python3 -c "
+    # Handle two formats:
+    # 1. String format: ["x : ℝ", "hx : x ∈ Set.Icc 0 1"] -> (x : ℝ) (hx : x ∈ Set.Icc 0 1)
+    # 2. Object format: [{"name": "x", "type": "ℝ"}] -> (x : ℝ)
+    HYPOTHESIS_SIG=$(echo "$HYPOTHESES" | python3 -c "
 import json, sys
 hyps = json.load(sys.stdin)
+parts = []
 for h in hyps:
-    name = h.get('name', '_')
-    htype = h.get('type', 'True')
-    print(f'variable ({name} : {htype})')
+    if isinstance(h, str):
+        parts.append(f'({h})')
+    elif isinstance(h, dict):
+        name = h.get('name', '_')
+        htype = h.get('type', 'True')
+        parts.append(f'({name} : {htype})')
+print(' '.join(parts))
 " 2>/dev/null || echo "")
 fi
 
@@ -60,9 +66,7 @@ fi
 cat > "$VERIFY_DIR/Check.lean" << EOF
 import Mathlib.Tactic
 
-$HYPOTHESIS_DECLS
-
-theorem _check_goal : $GOAL_TYPE := by
+theorem _check_goal $HYPOTHESIS_SIG : $GOAL_TYPE := by
   $TACTIC
 EOF
 
