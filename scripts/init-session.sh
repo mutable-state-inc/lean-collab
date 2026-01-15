@@ -20,10 +20,16 @@ fi
 
 TID=$(cat "$CONFIG" | jq -r '.theorem_id // empty')
 PLUGIN=$(cat "$CONFIG" | jq -r '.plugin_path // empty')
+LEAN_PROJECT=$(cat "$CONFIG" | jq -r '.lean_project // empty')
+MAX_DEPTH=$(cat "$CONFIG" | jq -r '.max_depth // 8')
 
 if [ -z "$TID" ] || [ -z "$PLUGIN" ]; then
     echo "ERROR: theorem_id or plugin_path missing from $CONFIG" >&2
     exit 1
+fi
+
+if [ -z "$LEAN_PROJECT" ]; then
+    echo "WARNING: lean_project not set in $CONFIG - Lean verification will fail" >&2
 fi
 
 E="$PLUGIN/scripts/ensue-api.sh"
@@ -49,6 +55,8 @@ echo "$TID" > "$STATE_DIR/theorem_id.txt"
 echo "$SCRIPTS" > "$STATE_DIR/scripts_path.txt"
 echo "$SID" > "$STATE_DIR/session_id.txt"
 echo "$STATE_DIR" > "$STATE_DIR/state_dir.txt"
+echo "$LEAN_PROJECT" > "$STATE_DIR/lean_project.txt"
+echo "$MAX_DEPTH" > "$STATE_DIR/max_depth.txt"
 
 # Start notification listener
 nohup bash "$SCRIPTS/listener.sh" "proofs/$TID" > "$STATE_DIR/notifications.log" 2>&1 &
@@ -64,6 +72,8 @@ if [ "$1" = "--export" ]; then
     echo "export TID='$TID'"
     echo "export SCRIPTS='$SCRIPTS'"
     echo "export SID='$SID'"
+    echo "export LEAN_PROJECT='$LEAN_PROJECT'"
+    echo "export MAX_DEPTH='$MAX_DEPTH'"
 else
     # Just output the state dir path
     echo "$STATE_DIR"

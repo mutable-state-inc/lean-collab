@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'INPUT=$(cat); P=$(cat .lean-collab.json 2>/dev/null | jq -r \".plugin_path // empty\"); if [ -n \"$P\" ] && [ \"$P\" != \"null\" ]; then echo \"$INPUT\" | bash \"$P/scripts/enforce-ensue-only.sh\"; else echo \"{\\\"decision\\\":\\\"approve\\\"}\"; fi'"
+            "command": "bash -c 'INPUT=$(cat); P=$(cat .lean-collab.json 2>/dev/null | jq -r \".plugin_path // empty\"); if [ -n \"$P\" ] && [ \"$P\" != \"null\" ]; then echo \"$INPUT\" | bash \"$P/scripts/enforce-ensue-only.sh\"; else echo \"{\\\"decision\\\":\\\"allow\\\"}\"; fi'"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'INPUT=$(cat); P=$(cat .lean-collab.json 2>/dev/null | jq -r \".plugin_path // empty\"); if [ -n \"$P\" ] && [ \"$P\" != \"null\" ]; then echo \"$INPUT\" | bash \"$P/scripts/enforce-routing.sh\"; else echo \"{\\\"decision\\\":\\\"approve\\\"}\"; fi'"
+            "command": "bash -c 'INPUT=$(cat); P=$(cat .lean-collab.json 2>/dev/null | jq -r \".plugin_path // empty\"); if [ -n \"$P\" ] && [ \"$P\" != \"null\" ]; then echo \"$INPUT\" | bash \"$P/scripts/enforce-routing.sh\"; else echo \"{\\\"decision\\\":\\\"allow\\\"}\"; fi'"
           }
         ]
       }

@@ -54,19 +54,19 @@ ENDJSON
         if echo "$FILE_PATH" | grep -qE '\.lean$'; then
             # Allow temp verification files
             if echo "$FILE_PATH" | grep -qE '^/tmp/|^/var/|/verify.*\.lean$'; then
-                echo '{"decision":"approve"}'
+                echo '{"decision":"allow"}'
                 exit 0
             fi
             # Allow main theorem file in project root (skill needs to read it for initial setup)
             # Pattern: TheoremName.lean (capital letter start) - handles relative and absolute paths
             BASENAME=$(basename "$FILE_PATH")
             if echo "$BASENAME" | grep -qE '^[A-Z][a-zA-Z0-9_]*\.lean$'; then
-                echo '{"decision":"approve"}'
+                echo '{"decision":"allow"}'
                 exit 0
             fi
             # Allow .lean-collab.json and CLAUDE.md
             if echo "$FILE_PATH" | grep -qE 'lean-collab\.json|CLAUDE\.md'; then
-                echo '{"decision":"approve"}'
+                echo '{"decision":"allow"}'
                 exit 0
             fi
             echo '{"decision":"block","message":"BLOCKED: Do not read project .lean files. Get goal info from Ensue."}'
@@ -89,7 +89,7 @@ ENDJSON
         # Allow unlimited size for composed/final proofs - these are outputs, not exploration
         if echo "$FILE_PATH" | grep -qiE '(composed|final|complete|full|proof).*\.lean$'; then
             # No limit for final proof files - they can be as long as needed
-            echo '{"decision":"approve"}'
+            echo '{"decision":"allow"}'
             exit 0
         fi
 
@@ -314,5 +314,5 @@ ENDJSON
         ;;
 esac
 
-echo '{"decision":"approve"}'
+echo '{"decision":"allow"}'
 exit 0

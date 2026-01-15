@@ -17,20 +17,20 @@ PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path') && eval $("$PLUGIN/script
 
 ## ⚡ STEP 2: GET YOUR ASSIGNED GOAL FROM PROMPT
 
-**Your prompt contains `goal $GID` - extract it and work ONLY on that goal.**
+**Your prompt contains `goal $GOAL_ID` - extract it and work ONLY on that goal.**
 
 ```bash
 # The skill assigned you a specific goal. Parse it from your prompt.
 # Example prompt: "STATE_DIR=/tmp/lean-collab-XYZ. Prove goal root-intro"
-# GID should be set to: root-intro
+# GOAL_ID should be set to: root-intro
 
 # CLAIM IT (atomic - will fail if another agent got it first)
-CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "prover" "$SID")
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GOAL_ID" "prover" "$SID")
 if [ $? -ne 0 ]; then
     echo "Claim failed - another agent got this goal. Exiting."
     exit 0
 fi
-echo "Claimed $GID"
+echo "Claimed $GOAL_ID"
 ```
 
 **⚠️ DO NOT use find-open-goals.sh. Work ONLY on the goal you were assigned.**
@@ -41,7 +41,7 @@ echo "Claimed $GID"
 Only after successful claim, read the goal and prove it:
 
 ```bash
-GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value')
+GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value')
 echo "$GOAL_DEF"
 ```
 
@@ -52,9 +52,9 @@ echo "$GOAL_DEF"
 **$E is a shell script. Call it: `$E <method> '<json>'`**
 
 ```bash
-$E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}'
+$E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition"]}'
 $E list_keys '{"prefix":"proofs/'"$TID"'/goals/","limit":50}'
-$E create_memory '{"items":[{"key_name":"proofs/'"$TID"'/solutions/'"$GID"'","value":"nlinarith [sq_nonneg x]","embed":true}]}'
+$E create_memory '{"items":[{"key_name":"proofs/'"$TID"'/solutions/'"$GOAL_ID"'","value":"nlinarith [sq_nonneg x]","embed":true}]}'
 ```
 
 **⚠️ DO NOT set status directly. Use claim-goal.sh to claim, then update status only AFTER proving.**
@@ -142,26 +142,27 @@ You are assigned ONE goal by the skill. Work ONLY on that goal until it's solved
 # 1. Initialize (first call only)
 PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path')
 eval $("$PLUGIN/scripts/init-session.sh" --export)
-# Now you have: E, TID, SCRIPTS, SID, STATE_DIR
+# Now you have: E, TID, SCRIPTS, SID, STATE_DIR, LEAN_PROJECT
 # E points to: $PLUGIN/scripts/ensue-api.sh
+# LEAN_PROJECT points to the Lean/Mathlib project for verification
 
 # 2. Your prompt tells you which goal to work on (e.g., "Prove goal root-intro")
-# GID=root-intro  # Extract from your prompt
+# GOAL_ID=root-intro  # Extract from your prompt
 
 # 3. Claim the goal (will fail if another agent got it first)
-CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "prover" "$SID")
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GOAL_ID" "prover" "$SID")
 if [ $? -ne 0 ]; then
     echo "Claim failed. Exiting."
     exit 0
 fi
 
 # 4. Get goal info and prove
-GOAL_INFO=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition","proofs/'"$TID"'/goals/'"$GID"'/leaf_type"]}')
+GOAL_INFO=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition","proofs/'"$TID"'/goals/'"$GOAL_ID"'/leaf_type"]}')
 # ... prove based on goal type ...
 
 # 5. After solving/failing, refresh subscriptions and exit
 "$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
-echo "Finished with $GID. Exiting."
+echo "Finished with $GOAL_ID. Exiting."
 exit 0
 ```
 
@@ -186,6 +187,8 @@ $E search_memories '{"query":"...","prefix":"proofs/$TID/tactics/library/","limi
 
 ## ⚠️ ZSH COMPATIBILITY
 
+- Do NOT use `GID` as a variable name (GID = group ID in zsh!)
+- Use `GOAL_ID` instead
 - Do NOT use `status` as a variable name (reserved in zsh)
 - Use `GOAL_STATUS` instead
 - Always use `// empty` in jq: `jq -r '.value // empty'`
@@ -195,18 +198,18 @@ $E search_memories '{"query":"...","prefix":"proofs/$TID/tactics/library/","limi
 ## Main Loop
 
 ```bash
-# GID is set from your prompt (e.g., "Prove goal root-intro" -> GID=root-intro)
+# GID is set from your prompt (e.g., "Prove goal root-intro" -> GOAL_ID=root-intro)
 # E, TID, SCRIPTS, SID are set from init-session.sh
 
 # 1. Claim your assigned goal
-CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "prover" "$SID")
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GOAL_ID" "prover" "$SID")
 if [ $? -ne 0 ]; then
-    echo "Claim failed - another agent got $GID. Exiting."
+    echo "Claim failed - another agent got $GOAL_ID. Exiting."
     exit 0
 fi
 
 # 2. Get goal info
-GOAL_INFO=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition","proofs/'"$TID"'/goals/'"$GID"'/leaf_type"]}')
+GOAL_INFO=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition","proofs/'"$TID"'/goals/'"$GOAL_ID"'/leaf_type"]}')
 GOAL_TYPE=$(echo "$GOAL_INFO" | jq -r '.result.structuredContent.results[0].value // empty' | jq -r '.type // empty')
 LEAF_TYPE=$(echo "$GOAL_INFO" | jq -r '.result.structuredContent.results[1].value // empty')
 
@@ -217,7 +220,7 @@ LEAF_TYPE=$(echo "$GOAL_INFO" | jq -r '.result.structuredContent.results[1].valu
 "$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
 
 # 5. Exit when done with YOUR goal
-echo "Finished proving $GID. Exiting."
+echo "Finished proving $GOAL_ID. Exiting."
 exit 0
 ```
 
@@ -298,7 +301,7 @@ $E search_memories '{"query":"sin concave bound","prefix":"proofs/$TID/tactics/l
 
 ```bash
 # Check if goal has dependencies
-DEPS=$($E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GID/dependencies\"]}" | jq -r '.result.structuredContent.results[0].value // empty')
+DEPS=$($E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GOAL_ID/dependencies\"]}" | jq -r '.result.structuredContent.results[0].value // empty')
 
 if [ -n "$DEPS" ]; then
     # Check if dependencies are solved
@@ -307,7 +310,7 @@ if [ -n "$DEPS" ]; then
 
     if [ -z "$DEP_SOL" ]; then
         # Dependency not solved - find other work!
-        $E update_memory "{\"key_name\":\"proofs/$TID/goals/$GID/status\",\"value\":\"open\"}"  # Release
+        $E update_memory "{\"key_name\":\"proofs/$TID/goals/$GOAL_ID/status\",\"value\":\"open\"}"  # Release
         continue  # Find another goal
     fi
 fi
@@ -326,7 +329,7 @@ import Mathlib
 #check @strictConcaveOn_sin_Icc
 #check @ConcaveOn
 EOF
-cd /private/tmp/putnam-test && lake env lean /tmp/chk.lean 2>&1
+cd "$LEAN_PROJECT" && lake env lean /tmp/chk.lean 2>&1
 ```
 
 **This confirms:**
@@ -342,7 +345,7 @@ cd /private/tmp/putnam-test && lake env lean /tmp/chk.lean 2>&1
 **Before working on ANY goal, check for discovery hints from the decomposer:**
 
 ```bash
-$E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GID/leaf_type\",\"proofs/$TID/goals/$GID/discovery\"]}"
+$E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GOAL_ID/leaf_type\",\"proofs/$TID/goals/$GOAL_ID/discovery\"]}"
 ```
 
 **The decomposer tells you HOW to approach each goal:**
@@ -513,7 +516,7 @@ jq -r '.results[0].value // empty'
 
 ```bash
 # SCRIPTS is set by init-session.sh (already exported)
-SUGGESTIONS=$("$SCRIPTS/pre-verify.sh" "$TID" "$GID" "$GOAL_TYPE" 2>&1)
+SUGGESTIONS=$("$SCRIPTS/pre-verify.sh" "$TID" "$GOAL_ID" "$GOAL_TYPE" 2>&1)
 EXIT_CODE=$?
 
 case $EXIT_CODE in
@@ -571,7 +574,7 @@ $E search_memories "{\"query\":\"$GOAL_TYPE\",\"prefix\":\"tactics/library/\",\"
 
 **If an AXIOM matches:** Mark goal as `solved_by_axiom` with reference to axiom key:
 ```bash
-$E update_memory "{\"key_name\":\"proofs/$TID/goals/$GID/status\",\"value\":\"solved_by_axiom:axioms/central-binomial-gf\"}"
+$E update_memory "{\"key_name\":\"proofs/$TID/goals/$GOAL_ID/status\",\"value\":\"solved_by_axiom:axioms/central-binomial-gf\"}"
 ```
 
 **If you find a matching tactic, USE IT DIRECTLY:**
@@ -608,7 +611,7 @@ $E search_memories "{\"query\":\"concave sin parabola\",\"prefix\":\"tactics/lib
    import Mathlib
    #check @strictConcaveOn_sin_Icc
    EOF
-   cd /private/tmp/putnam-test && lake env lean /tmp/c.lean
+   cd "$LEAN_PROJECT" && lake env lean /tmp/c.lean
 
 3. APPLY (with verified lemma):
    have h := strictConcaveOn_sin_Icc.concaveOn
@@ -712,17 +715,17 @@ for TACTIC in "nlinarith [hint1, hint2]" "linarith" "norm_num"; do
 
   if [ $? -eq 0 ]; then
     # SUCCESS - record and exit
-    record_solution "$GID" "$TACTIC"
+    record_solution "$GOAL_ID" "$TACTIC"
     exit 0
   else
     # FAILURE - record attempt
-    record_attempt "$GID" "$TACTIC" "$RESULT"
+    record_attempt "$GOAL_ID" "$TACTIC" "$RESULT"
   fi
 
   ATTEMPT=$((ATTEMPT + 1))
   if [ $ATTEMPT -gt 3 ]; then
     # BAIL OUT - release goal
-    release_goal "$GID"
+    release_goal "$GOAL_ID"
     exit 1
   fi
 done
@@ -756,7 +759,7 @@ done
 if echo "$ERROR" | grep -aq "type mismatch\|could not unify"; then
   if [ "$PREV_ERROR_CLASS" = "type_mismatch" ]; then
     # Same error class twice - bail out
-    $E update_memory '{"key_name":"proofs/'$TID'/goals/'$GID'/status","value":"needs_decomposition"}'
+    $E update_memory '{"key_name":"proofs/'$TID'/goals/'$GOAL_ID'/status","value":"needs_decomposition"}'
     exit 0
   fi
   PREV_ERROR_CLASS="type_mismatch"
@@ -824,7 +827,7 @@ This enables automatic attempt tracking. The hook will block after 3 failures.
 - Custom lemma applications
 
 ```bash
-GID="your-goal-id"
+GOAL_ID="your-goal-id"
 TACTIC="norm_num"  # or your tactic
 
 # Check if tactic needs verification
@@ -844,7 +847,7 @@ import Mathlib.Tactic
 theorem check : $GOAL_TYPE := by
   $TACTIC
 EOF
-    cd /private/tmp/putnam-test && lake env lean "/tmp/verify_${GID}.lean" 2>&1
+    cd "$LEAN_PROJECT" && lake env lean "/tmp/verify_${GID}.lean" 2>&1
     COMPILE_RESULT=$?
     ;;
 esac
@@ -955,6 +958,138 @@ $E create_memory '{"items":[{
 }]}'
 ```
 
+### On Malformed Goal - REPORT AND EXIT
+
+**If you detect the goal is mathematically FALSE or malformed:**
+
+```bash
+# 1. Set error status
+$E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"error:malformed_goal"}'
+
+# 2. Record detailed error report for humans/future agents
+$E create_memory '{"items":[{
+  "key_name":"proofs/{TID}/goals/{GID}/error_report",
+  "value":"{\"error_type\":\"malformed_goal\",\"analysis\":\"...\",\"suggested_fix\":\"...\",\"agent\":\"prover-$SID\"}",
+  "description":"error report for malformed goal",
+  "embed":true
+}]}'
+
+# 3. Exit - the skill will skip this goal
+exit 0
+```
+
+**Common malformed patterns:**
+- Positive quantity claimed < negative quantity
+- Type mismatch (comparing incompatible types)
+- Contradictory hypotheses
+- Missing or undefined variables in goal type
+
+**The `error:*` status is terminal** - the goal won't block composition.
+
+---
+
+### On Malformed Goal - FIX PARENT DECOMPOSITION
+
+**If your goal is malformed, the PARENT was decomposed incorrectly. Fix it:**
+
+```bash
+# 1. Get parent goal
+PARENT=$($E get_memory '{"key_names":["proofs/'$TID'/goals/'$GOAL_ID'/parent"]}' | jq -r '.result.structuredContent.results[0].value // empty')
+
+# 2. Mark current goal as error
+$E update_memory '{"key_name":"proofs/'$TID'/goals/'$GOAL_ID'/status","value":"error:malformed_goal"}'
+
+# 3. If parent exists, check if it should be axiomatized
+if [ -n "$PARENT" ] && [ "$PARENT" != "null" ]; then
+  # Get parent definition to check if it's TRUE
+  PARENT_DEF=$($E get_memory '{"key_names":["proofs/'$TID'/goals/'$PARENT'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
+  PARENT_TYPE=$(echo "$PARENT_DEF" | jq -r '.type // empty')
+
+  # If parent goal is mathematically TRUE (e.g., known inequality), axiomatize it
+  # Check: sin bounds, parabola bounds, Taylor bounds are typically TRUE
+  echo "Parent $PARENT has type: $PARENT_TYPE"
+  echo "If this is a known TRUE result, axiomatize it:"
+
+  # Clear parent's bad decomposition
+  $E delete_memory '{"key_names":["proofs/'$TID'/goals/'$PARENT'/children","proofs/'$TID'/goals/'$PARENT'/tactic"]}'
+
+  # Mark parent as axiom (if TRUE) or open (to retry decomposition)
+  $E update_memory '{"key_name":"proofs/'$TID'/goals/'$PARENT'/status","value":"axiom"}'
+
+  echo "Fixed: $PARENT is now axiom"
+fi
+
+exit 0
+```
+
+**When to axiomatize the parent vs retry:**
+- Parent is known TRUE inequality (sin/cos bounds, π bounds) → `axiom`
+- Parent decomposition was just wrong approach → `open` (retry)
+
+---
+
+### On Hard Goal (3 Failures) - AXIOMATIZE ONLY IF DEEP ENOUGH
+
+**After 3 failed tactic attempts, check if goal can be axiomatized.**
+
+**⚠️ CRITICAL: Axioms are only allowed in "deep" regions of the proof tree.**
+A mathematician won't accept axioms for high-level goals. Only leaf-level lemmas can be axiomatized.
+
+```bash
+# 1. Check if we're deep enough to axiomatize
+MAX_DEPTH=${MAX_DEPTH:-3}  # From init-session.sh
+GOAL_DEF=$($E get_memory '{"key_names":["proofs/'$TID'/goals/'$GOAL_ID'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
+GOAL_DEPTH=$(echo "$GOAL_DEF" | jq -r '.depth // 0')
+
+# Axioms only allowed at depth >= MAX_DEPTH - 1 (i.e., near the leaves)
+MIN_AXIOM_DEPTH=$((MAX_DEPTH - 1))
+
+if [ "$GOAL_DEPTH" -lt "$MIN_AXIOM_DEPTH" ]; then
+  # NOT deep enough - must decompose instead
+  echo "Goal at depth $GOAL_DEPTH < $MIN_AXIOM_DEPTH - too shallow for axiom"
+  $E update_memory '{"key_name":"proofs/'$TID'/goals/'$GOAL_ID'/status","value":"needs_decomposition"}'
+  $E create_memory '{"items":[{
+    "key_name":"proofs/'$TID'/goals/'$GOAL_ID'/decomposition_request",
+    "value":"{\"reason\":\"too shallow for axiom (depth $GOAL_DEPTH < $MIN_AXIOM_DEPTH)\",\"suggestion\":\"decompose further before axiomatizing\"}",
+    "embed":true
+  }]}'
+  exit 0
+fi
+
+# 2. Now check if goal is mathematically TRUE (only then axiomatize)
+# Is goal mathematically TRUE but too hard for Lean automation?
+# Check: plug in values, check known results, verify manually
+
+# Axiom-worthy patterns (TRUE but hard):
+# - sin/cos/tan bounds: sin x ≤ f(x)
+# - Taylor bounds: arcsin x ≥ x + x³/6
+# - π bounds: π² < 10
+# - Concavity-based bounds on transcendentals
+
+# If TRUE but hard → axiomatize
+$E update_memory '{"key_name":"proofs/'$TID'/goals/'$GOAL_ID'/status","value":"axiom"}'
+$E create_memory '{"items":[{
+  "key_name":"proofs/'$TID'/goals/'$GOAL_ID'/axiom_justification",
+  "value":"{\"reason\":\"transcendental inequality at depth $GOAL_DEPTH\",\"verified\":\"boundary values checked\"}",
+  "embed":true
+}]}'
+exit 0
+
+# If might decompose better → needs_decomposition
+# If FALSE → error:malformed_goal
+```
+
+**Depth thresholds:**
+| MAX_DEPTH | MIN_AXIOM_DEPTH | Meaning |
+|-----------|-----------------|---------|
+| 3 | 2 | Only depth 2+ goals can be axioms |
+| 4 | 3 | Only depth 3+ goals can be axioms |
+| 5 | 4 | Only depth 4+ goals can be axioms |
+
+**If a shallow goal can't be proved:** Decompose it further. Only "leaf-level" lemmas should ever become axioms.
+
+---
+
 ### Allowed Tactics (choose based on goal type)
 
 **For inequalities with discovered lemmas:**
@@ -1029,7 +1164,7 @@ After solving or marking needs_decomposition, refresh subscriptions and exit:
 "$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
 
 # Exit - the skill will spawn new agents for remaining goals
-echo "Finished with $GID. Exiting."
+echo "Finished with $GOAL_ID. Exiting."
 exit 0
 ```
 

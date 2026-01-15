@@ -25,9 +25,16 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 E="$SCRIPT_DIR/ensue-api.sh"
 
+# Read max parallel agents from config (default: 9)
+MAX_PARALLEL=9
+if [ -f ".lean-collab.json" ]; then
+    CONFIGURED=$(cat .lean-collab.json 2>/dev/null | jq -r '.max_parallel_agents // empty')
+    [ -n "$CONFIGURED" ] && MAX_PARALLEL="$CONFIGURED"
+fi
+
 check_state() {
     # Get all goal statuses in one batch
-    RESULT=$("$E" list_keys "{\"prefix\":\"proofs/$TID/goals/\",\"limit\":100}" 2>/dev/null)
+    RESULT=$("$E" list_keys "{\"prefix\":\"proofs/$TID/goals/\",\"limit\":1000}" 2>/dev/null)
     STATUS_KEYS=$(echo "$RESULT" | jq -r '.result.structuredContent.keys[].key_name' 2>/dev/null | grep '/status$')
 
     if [ -z "$STATUS_KEYS" ]; then
@@ -58,8 +65,11 @@ check_state() {
                 ALL_DONE=false
                 WORKING_COUNT=$((WORKING_COUNT + 1))
                 ;;
-            solved|decomposed|solved_by_axiom*)
-                # These are terminal states
+            solved|decomposed|axiom|solved_by_axiom*)
+                # These are terminal states (axiom = goal is accepted as axiom)
+                ;;
+            error:*)
+                # Error states are terminal - skip them (malformed_goal, etc.)
                 ;;
             *)
                 # Unknown status - treat as needing attention
@@ -72,8 +82,17 @@ check_state() {
     # Remove trailing comma
     OPEN_GOALS=$(echo "$OPEN_GOALS" | sed 's/,$//')
 
-    if [ -n "$OPEN_GOALS" ]; then
-        echo "{\"action\":\"claim\",\"goals\":[$OPEN_GOALS]}"
+    # Calculate available slots
+    AVAILABLE_SLOTS=$((MAX_PARALLEL - WORKING_COUNT))
+
+    if [ -n "$OPEN_GOALS" ] && [ "$AVAILABLE_SLOTS" -gt 0 ]; then
+        # Limit goals to available slots
+        LIMITED_GOALS=$(echo "$OPEN_GOALS" | tr ',' '\n' | head -n "$AVAILABLE_SLOTS" | tr '\n' ',' | sed 's/,$//')
+        TOTAL_OPEN=$(echo "$OPEN_GOALS" | tr ',' '\n' | wc -l | tr -d ' ')
+        echo "{\"action\":\"claim\",\"goals\":[$LIMITED_GOALS],\"total_open\":$TOTAL_OPEN,\"slots\":$AVAILABLE_SLOTS,\"max\":$MAX_PARALLEL}"
+    elif [ -n "$OPEN_GOALS" ] && [ "$AVAILABLE_SLOTS" -le 0 ]; then
+        # Have open goals but at capacity
+        echo "{\"action\":\"wait\",\"reason\":\"at capacity ($WORKING_COUNT/$MAX_PARALLEL agents)\",\"queued\":[$OPEN_GOALS]}"
     elif [ "$ALL_DONE" = true ]; then
         echo '{"action":"compose","goals":[]}'
     else

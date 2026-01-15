@@ -18,7 +18,7 @@ PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path') && eval $("$PLUGIN/script
 
 ## ⚡ STEP 2: GET YOUR ASSIGNED GOAL FROM PROMPT
 
-**Your prompt contains `goal $GID` - extract it and work ONLY on that goal.**
+**Your prompt contains `goal $GOAL_ID` - extract it and work ONLY on that goal.**
 
 ```bash
 # The skill assigned you a specific goal. Parse it from your prompt.
@@ -26,12 +26,12 @@ PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path') && eval $("$PLUGIN/script
 # GID should be set to: root
 
 # CLAIM IT (atomic - will fail if another agent got it first)
-CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "decomposer" "$SID")
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GOAL_ID" "decomposer" "$SID")
 if [ $? -ne 0 ]; then
     echo "Claim failed - another agent got this goal. Exiting."
     exit 0
 fi
-echo "Claimed $GID"
+echo "Claimed $GOAL_ID"
 ```
 
 **⚠️ DO NOT use find-open-goals.sh. Work ONLY on the goal you were assigned.**
@@ -42,7 +42,7 @@ echo "Claimed $GID"
 Only after successful claim, read the goal and decompose it:
 
 ```bash
-GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value')
+GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value')
 echo "$GOAL_DEF"
 ```
 
@@ -53,7 +53,7 @@ echo "$GOAL_DEF"
 **$E is a shell script. Call it: `$E <method> '<json>'`**
 
 ```bash
-$E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}'
+$E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition"]}'
 $E list_keys '{"prefix":"proofs/'"$TID"'/goals/","limit":50}'
 $E create_memory '{"items":[{"key_name":"proofs/'"$TID"'/goals/sub1/definition","value":"{...}","embed":true}]}'
 ```
@@ -124,28 +124,28 @@ You are assigned ONE goal by the skill. Work ONLY on that goal. Do NOT search fo
 # 1. Initialize (first call only)
 PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path')
 eval $("$PLUGIN/scripts/init-session.sh" --export)
-# Now you have: E, TID, SCRIPTS, SID, STATE_DIR
+# Now you have: E, TID, SCRIPTS, SID, STATE_DIR, LEAN_PROJECT
 # E points to: $PLUGIN/scripts/ensue-api.sh
 
 # 2. Your prompt tells you which goal to work on (e.g., "Decompose goal root")
-# GID=root  # Extract from your prompt
+# GOAL_ID=root  # Extract from your prompt
 
 # 3. Claim the goal (will fail if another agent got it first)
-CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "decomposer" "$SID")
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GOAL_ID" "decomposer" "$SID")
 if [ $? -ne 0 ]; then
     echo "Claim failed. Exiting."
     exit 0
 fi
 
 # 4. Read and decompose
-GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
+GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
 # ... decompose and create subgoals ...
 
 # 5. After creating subgoals, refresh subscriptions so notifications work
 "$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
 
 # 6. Exit - the skill spawns new agents for new goals
-echo "Decomposed $GID. Exiting."
+echo "Decomposed $GOAL_ID. Exiting."
 exit 0
 ```
 
@@ -183,6 +183,7 @@ $E search_memories '{"query":"...","prefix":"proofs/$TID/tactics/","limit":3}'  
 ## ⚠️ ZSH COMPATIBILITY
 
 **Do NOT use these as variable names (reserved in zsh):**
+- `GID` → use `GOAL_ID` instead (GID = group ID in zsh!)
 - `status` → use `GOAL_STATUS` instead
 - `reply` → use `RESULT` instead
 
@@ -196,18 +197,18 @@ jq -r '.result.structuredContent.results[0].value // empty'
 ## Main Loop
 
 ```bash
-# GID is set from your prompt (e.g., "Decompose goal root" -> GID=root)
+# GID is set from your prompt (e.g., "Decompose goal root" -> GOAL_ID=root)
 # E, TID, SCRIPTS, SID are set from init-session.sh
 
 # 1. Claim your assigned goal
-CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GID" "decomposer" "$SID")
+CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GOAL_ID" "decomposer" "$SID")
 if [ $? -ne 0 ]; then
-    echo "Claim failed - another agent got $GID. Exiting."
+    echo "Claim failed - another agent got $GOAL_ID. Exiting."
     exit 0
 fi
 
 # 2. Read goal definition
-GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
+GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
 GOAL_TYPE=$(echo "$GOAL_DEF" | jq -r '.type // empty')
 
 # 3. Decompose it (create subgoals, update status to "decomposed")
@@ -217,7 +218,7 @@ GOAL_TYPE=$(echo "$GOAL_DEF" | jq -r '.type // empty')
 "$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
 
 # 5. Exit when done with YOUR goal
-echo "Finished decomposing $GID. Exiting."
+echo "Finished decomposing $GOAL_ID. Exiting."
 exit 0
 ```
 
@@ -253,21 +254,14 @@ MAX_DEPTH=$(cat .lean-collab.json 2>/dev/null | jq -r '.max_depth // 8')
 | Standard Mathlib lemmas | 4-6 |
 | Simple decidable proofs | 3 |
 
-**Check the goal's parent chain before decomposing:**
+**Check the goal's depth before decomposing:**
 ```bash
-# Get parent chain depth
-DEPTH=0
-CURRENT=$GID
-while true; do
-  PARENT=$($E get_memory "{\"key_names\":[\"proofs/$TID/goals/$CURRENT/parent\"]}" | jq -r '.result.structuredContent.results[0].value // empty')
-  [ -z "$PARENT" ] && break
-  DEPTH=$((DEPTH + 1))
-  CURRENT=$PARENT
-done
+# Get stored depth (root has depth 0)
+DEPTH=$($E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GOAL_ID/depth\"]}" | jq -r '.result.structuredContent.results[0].value // "0"')
 
-if [ $DEPTH -ge $MAX_DEPTH ]; then
+if [ "$DEPTH" -ge "$MAX_DEPTH" ]; then
   # At max depth - but check if goal MUST be decomposed (transcendentals + inequality)
-  GOAL_TYPE=$($E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GID/definition\"]}" | jq -r '.result.structuredContent.results[0].value // empty' | jq -r '.type // empty')
+  GOAL_TYPE=$($E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GOAL_ID/definition\"]}" | jq -r '.result.structuredContent.results[0].value // empty' | jq -r '.type // empty')
 
   # Check for transcendental + inequality pattern
   HAS_TRANS=$(echo "$GOAL_TYPE" | grep -aqE 'Real\.(sin|cos|tan|exp|log|pi)' && echo "1" || echo "0")
@@ -279,7 +273,7 @@ if [ $DEPTH -ge $MAX_DEPTH ]; then
     # Don't mark as leaf, allow decomposition to continue
   else
     # Normal case: mark as leaf
-    $E update_memory "{\"key_name\":\"proofs/$TID/goals/$GID/leaf_type\",\"value\":\"needs_verification\"}"
+    $E update_memory "{\"key_name\":\"proofs/$TID/goals/$GOAL_ID/leaf_type\",\"value\":\"needs_verification\"}"
   fi
 fi
 ```
@@ -478,14 +472,20 @@ For Putnam 2023 A1 (`IsLeast {n : ℕ | 0 < n ∧ n * (n + 1) * (2 * n + 1) / 6 
 ```bash
 # E is already set from init-session.sh
 
-# Create subgoals with SELF-CONTAINED types (no external definitions!)
+# FIRST: Get current goal's depth (root has depth 0)
+PARENT_DEPTH=$($E get_memory '{"key_names":["proofs/putnam-2023-a1/goals/root/depth"]}' | jq -r '.result.structuredContent.results[0].value // "0"')
+CHILD_DEPTH=$((PARENT_DEPTH + 1))
+
+# Create subgoals with SELF-CONTAINED types AND DEPTH TRACKING
 $E create_memory '{"items":[
   {"key_name":"proofs/putnam-2023-a1/goals/membership/definition","value":"{\"type\":\"0 < 18 ∧ 18 * (18 + 1) * (2 * 18 + 1) / 6 > 2023\"}","description":"membership","embed":true},
   {"key_name":"proofs/putnam-2023-a1/goals/membership/status","value":"open","description":"status","embed":false},
   {"key_name":"proofs/putnam-2023-a1/goals/membership/parent","value":"root","description":"parent","embed":false},
+  {"key_name":"proofs/putnam-2023-a1/goals/membership/depth","value":"'"$CHILD_DEPTH"'","description":"depth in tree","embed":false},
   {"key_name":"proofs/putnam-2023-a1/goals/minimality/definition","value":"{\"type\":\"∀ m : ℕ, (0 < m ∧ m * (m + 1) * (2 * m + 1) / 6 > 2023) → 18 ≤ m\"}","description":"minimality","embed":true},
   {"key_name":"proofs/putnam-2023-a1/goals/minimality/status","value":"open","description":"status","embed":false},
-  {"key_name":"proofs/putnam-2023-a1/goals/minimality/parent","value":"root","description":"parent","embed":false}
+  {"key_name":"proofs/putnam-2023-a1/goals/minimality/parent","value":"root","description":"parent","embed":false},
+  {"key_name":"proofs/putnam-2023-a1/goals/minimality/depth","value":"'"$CHILD_DEPTH"'","description":"depth in tree","embed":false}
 ]}'
 
 # Mark root as decomposed WITH the tactic that created the split
@@ -494,7 +494,9 @@ $E update_memory '{"key_name":"proofs/putnam-2023-a1/goals/root/children","value
 $E update_memory '{"key_name":"proofs/putnam-2023-a1/goals/root/tactic","value":"constructor"}'
 ```
 
-**IMPORTANT: Always record the decomposition tactic so the proof can be composed later.**
+**IMPORTANT: Always record:**
+1. The decomposition tactic (for proof composition)
+2. The depth (for max_depth enforcement)
 
 ### ❌ BAD goal types (reference external definitions):
 - `|f_18''(0)| > 2023` ← uses undefined `f_18`
@@ -511,10 +513,15 @@ For `∀ x ∈ Set.Icc 0 Real.pi, f(x) ≤ g(x)`:
 
 ```bash
 # For goal: ∀ x ∈ [0,π], (1/π) * x * (π-x) ≤ sin(x)
+# Get parent depth first
+PARENT_DEPTH=$($E get_memory '{"key_names":["proofs/{TID}/goals/{GID}/depth"]}' | jq -r '.result.structuredContent.results[0].value // "0"')
+CHILD_DEPTH=$((PARENT_DEPTH + 1))
+
 $E create_memory '{"items":[
   {"key_name":"proofs/{TID}/goals/{GID}-intro/definition","value":"{\"type\":\"(1 / Real.pi) * x * (Real.pi - x) ≤ Real.sin x\",\"hypotheses\":[\"x : ℝ\",\"hx : x ∈ Set.Icc 0 Real.pi\"]}","description":"after intro","embed":true},
   {"key_name":"proofs/{TID}/goals/{GID}-intro/status","value":"open","description":"status","embed":false},
-  {"key_name":"proofs/{TID}/goals/{GID}-intro/parent","value":"{GID}","description":"parent","embed":false}
+  {"key_name":"proofs/{TID}/goals/{GID}-intro/parent","value":"{GID}","description":"parent","embed":false},
+  {"key_name":"proofs/{TID}/goals/{GID}-intro/depth","value":"'"$CHILD_DEPTH"'","description":"depth in tree","embed":false}
 ]}'
 
 $E update_memory '{"key_name":"proofs/{TID}/goals/{GID}/status","value":"decomposed"}'
@@ -633,7 +640,7 @@ After creating subgoals, refresh subscriptions and exit:
 "$SCRIPTS/refresh-subscriptions.sh" "$TID" > /dev/null 2>&1 &
 
 # Exit - the skill will spawn new agents for the new goals
-echo "Decomposed $GID. Exiting."
+echo "Decomposed $GOAL_ID. Exiting."
 exit 0
 ```
 

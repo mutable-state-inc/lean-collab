@@ -6,6 +6,6 @@
     "name": "Sai Vegasena",
     "email": "sai@ensue.dev"
   },
-  "agents": ["./agents/decomposer.md", "./agents/lean-prover.md"],
+  "agents": ["./agents/decomposer.md", "./agents/lean-prover.md", "./agents/lean-composer.md"],
   "skills": ["./skills/lean-collab"]
 }

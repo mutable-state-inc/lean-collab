@@ -1,0 +1,86 @@
+#!/bin/bash
+#
+# enforce-routing.sh - Hook to enforce correct agent routing
+#
+# PreToolUse hook for Task tool - blocks if wrong agent type for goal
+#
+
+# Read the hook input from stdin
+INPUT=$(cat)
+
+# Extract tool input
+TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input // empty')
+if [ -z "$TOOL_INPUT" ]; then
+    echo '{"decision":"approve"}'
+    exit 0
+fi
+
+# Get subagent_type
+SUBAGENT_TYPE=$(echo "$TOOL_INPUT" | jq -r '.subagent_type // empty')
+
+# Only check lean-collab routing
+case "$SUBAGENT_TYPE" in
+    lean-collab:decomposer|lean-collab:lean-prover)
+        ;;
+    *)
+        echo '{"decision":"approve"}'
+        exit 0
+        ;;
+esac
+
+# Extract goal ID from prompt
+PROMPT=$(echo "$TOOL_INPUT" | jq -r '.prompt // empty')
+
+# Extract goal ID - patterns: "goal isGreatest-mem" or "Decompose goal isGreatest-mem"
+# The goal ID follows "goal " in the prompt
+GOAL_ID=$(echo "$PROMPT" | sed -n 's/.*goal \([a-zA-Z0-9_-]*\).*/\1/p' | head -1)
+
+if [ -z "$GOAL_ID" ]; then
+    echo '{"decision":"approve"}'
+    exit 0
+fi
+
+# Get plugin path from .lean-collab.json
+PLUGIN_PATH=$(cat .lean-collab.json 2>/dev/null | jq -r '.plugin_path // empty')
+if [ -z "$PLUGIN_PATH" ]; then
+    # Fallback to script directory
+    PLUGIN_PATH="$(cd "$(dirname "$0")/.." && pwd)"
+fi
+
+# Get theorem ID from prompt
+TID=$(echo "$PROMPT" | grep -oE 'putnam-[a-zA-Z0-9_-]+' | head -1)
+if [ -z "$TID" ]; then
+    TID=$(cat .lean-collab.json 2>/dev/null | jq -r '.theorem_id // empty')
+fi
+
+if [ -z "$TID" ]; then
+    echo '{"decision":"approve"}'
+    exit 0
+fi
+
+# Run route-goal.sh
+CORRECT_ROUTE=$("$PLUGIN_PATH/scripts/route-goal.sh" "$TID" "$GOAL_ID" 2>/dev/null)
+
+if [ -z "$CORRECT_ROUTE" ]; then
+    echo '{"decision":"approve"}'
+    exit 0
+fi
+
+# Check if routing matches
+REQUESTED_AGENT=""
+case "$SUBAGENT_TYPE" in
+    lean-collab:decomposer) REQUESTED_AGENT="decomposer" ;;
+    lean-collab:lean-prover) REQUESTED_AGENT="prover" ;;
+esac
+
+if [ "$CORRECT_ROUTE" != "$REQUESTED_AGENT" ]; then
+    cat << ENDJSON
+{
+  "decision": "block",
+  "message": "ROUTING ERROR: Goal '$GOAL_ID' should go to $CORRECT_ROUTE, not $REQUESTED_AGENT."
+}
+ENDJSON
+    exit 0
+fi
+
+echo '{"decision":"approve"}'

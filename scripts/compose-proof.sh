@@ -54,10 +54,35 @@ echo "Found $num_goals goals"
 # Cache goal data
 echo "Caching goal data..."
 cached_with_sol=0
+axiom_count=0
 while read -r goal; do
-  get_value "proofs/$TID/goals/$goal/status" > "$TMPDIR/$goal.status"
+  status=$(get_value "proofs/$TID/goals/$goal/status")
+  echo "$status" > "$TMPDIR/$goal.status"
   get_value "proofs/$TID/goals/$goal/tactic" > "$TMPDIR/$goal.tactic"
   get_value "proofs/$TID/goals/$goal/children" > "$TMPDIR/$goal.children"
+
+  # Handle axiom status - generate axiom declaration as solution
+  if [ "$status" = "axiom" ]; then
+    goal_def=$(get_value "proofs/$TID/goals/$goal/definition")
+    goal_type=$(echo "$goal_def" | jq -r '.type // empty' 2>/dev/null)
+    # Generate axiom name from goal id (replace - with _)
+    axiom_name=$(echo "$goal" | tr '-' '_')
+    echo "axiom $axiom_name : $goal_type" > "$TMPDIR/$goal.solution"
+    touch "$TMPDIR/$goal.composed"
+    axiom_count=$((axiom_count + 1))
+    continue
+  fi
+
+  # Handle solved_by_axiom:X - use exact with the axiom reference
+  if [[ "$status" == solved_by_axiom:* ]]; then
+    axiom_ref="${status#solved_by_axiom:}"
+    axiom_name=$(echo "$axiom_ref" | sed 's|.*/||; s/-/_/g')
+    echo "exact $axiom_name" > "$TMPDIR/$goal.solution"
+    touch "$TMPDIR/$goal.composed"
+    cached_with_sol=$((cached_with_sol + 1))
+    continue
+  fi
+
   sol=$(get_solution "$goal")
   if [ -n "$sol" ]; then
     echo "$sol" > "$TMPDIR/$goal.solution"
@@ -65,7 +90,7 @@ while read -r goal; do
     cached_with_sol=$((cached_with_sol + 1))
   fi
 done < "$TMPDIR/goals.txt"
-echo "Cached $cached_with_sol goals with solutions"
+echo "Cached $cached_with_sol goals with solutions, $axiom_count axioms"
 
 echo "Starting composition..."
 echo ""
@@ -109,11 +134,11 @@ while [ $iteration -lt $max_iterations ]; do
     all_ready=true
     while IFS= read -r child; do
       [ -z "$child" ] && continue
-      # Check if child is abandoned/invalid (can be skipped)
+      # Check if child is abandoned/invalid/error (can be skipped)
       child_status=$(cat "$TMPDIR/$child.status" 2>/dev/null)
       case "$child_status" in
-        abandoned*|invalid*|replaced*|duplicate*|alternative*)
-          # Skip this child - it's a dead end
+        abandoned*|invalid*|replaced*|duplicate*|alternative*|error:*)
+          # Skip this child - it's a dead end or errored
           continue
           ;;
       esac
@@ -136,15 +161,15 @@ while [ $iteration -lt $max_iterations ]; do
     tactic=$(cat "$TMPDIR/$goal.tactic" 2>/dev/null)
     [ "$tactic" = "null" ] && tactic=""
 
-    # Collect child solutions (skip abandoned/invalid)
+    # Collect child solutions (skip abandoned/invalid/error)
     child_sols=""
     num_children=0
     while IFS= read -r child; do
       [ -z "$child" ] && continue
-      # Skip abandoned/invalid children
+      # Skip abandoned/invalid/error children
       child_status=$(cat "$TMPDIR/$child.status" 2>/dev/null)
       case "$child_status" in
-        abandoned*|invalid*|replaced*|duplicate*|alternative*)
+        abandoned*|invalid*|replaced*|duplicate*|alternative*|error:*)
           continue
           ;;
       esac
