@@ -27,15 +27,15 @@ tools:
 
 ---
 
-## INIT (ONCE only!)
+## LOAD SESSION (ONCE only!)
 
-**⚠️ Only run init ONCE at the start. Do NOT repeat in loops!**
+**⚠️ Only run this ONCE at the start. Do NOT repeat in loops!**
 
 ```bash
 # Check if already initialized
 if [ -z "$E" ]; then
     PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path')
-    eval $("$PLUGIN/scripts/init-session.sh" --export)
+    eval $("$PLUGIN/scripts/load-session.sh")
 fi
 # Now you have: E, TID, SID, SCRIPTS, STATE_DIR, LEAN_PROJECT
 ```
@@ -211,7 +211,7 @@ export E=/path/to/script; export TID=theorem-id
 # ✅ BEST - use the init pattern (already handles zsh)
 if [ -z "$E" ]; then
     PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path')
-    eval $("$PLUGIN/scripts/init-session.sh" --export)
+    eval $("$PLUGIN/scripts/load-session.sh" --export)
 fi
 ```
 
@@ -226,7 +226,7 @@ fi
 # 1. Init (with guard to prevent re-init)
 if [ -z "$E" ]; then
     PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path')
-    eval $("$PLUGIN/scripts/init-session.sh" --export)
+    eval $("$PLUGIN/scripts/load-session.sh" --export)
 fi
 
 # 2. Compose

@@ -49,7 +49,10 @@ SID=$(head -c 6 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 8)
 STATE_DIR="/tmp/lean-collab-$SID"
 mkdir -p "$STATE_DIR"
 
-# Write state files
+# Initialize spawn tracking (prevents thundering herd OOM)
+echo "0" > "$STATE_DIR/pending_spawns"
+
+# Write state files (both formats for compatibility)
 echo "$E" > "$STATE_DIR/ensue_path.txt"
 echo "$TID" > "$STATE_DIR/theorem_id.txt"
 echo "$SCRIPTS" > "$STATE_DIR/scripts_path.txt"
@@ -58,9 +61,28 @@ echo "$STATE_DIR" > "$STATE_DIR/state_dir.txt"
 echo "$LEAN_PROJECT" > "$STATE_DIR/lean_project.txt"
 echo "$MAX_DEPTH" > "$STATE_DIR/max_depth.txt"
 
-# Start notification listener
+# Write session.json for session-end.sh
+cat > "$STATE_DIR/session.json" << EOF
+{"theorem_id":"$TID","session_id":"$SID","state_dir":"$STATE_DIR","created":$(date +%s),"created_by_pid":"$$"}
+EOF
+
+# Store active session in .lean-collab.json so subagents can find it
+TMP=$(mktemp)
+jq --arg sd "$STATE_DIR" --arg sid "$SID" '. + {active_state_dir: $sd, active_session_id: $sid}' "$CONFIG" > "$TMP" && mv "$TMP" "$CONFIG"
+
+# Start notification listener (shared per theorem, not per session)
+# Use a global PID file to prevent listener accumulation
+LISTENER_PID_FILE="/tmp/lean-collab-listener-$TID.pid"
+
+# Kill any existing listeners for this theorem first
+pkill -f "listener.sh proofs/$TID" 2>/dev/null || true
+sleep 0.2
+
+# Start fresh listener
 nohup bash "$SCRIPTS/listener.sh" "proofs/$TID" > "$STATE_DIR/notifications.log" 2>&1 &
-echo $! > "$STATE_DIR/listener.pid"
+LISTENER_PID=$!
+echo $LISTENER_PID > "$LISTENER_PID_FILE"
+echo $LISTENER_PID > "$STATE_DIR/listener.pid"
 
 # Subscribe to existing goals
 bash "$SCRIPTS/refresh-subscriptions.sh" "$TID" > "$STATE_DIR/subscriptions.log" 2>&1 &

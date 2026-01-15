@@ -9,10 +9,10 @@ tools:
 
 # Lean Prover Agent
 
-## ⚡ STEP 1: INIT
+## ⚡ STEP 1: LOAD SESSION
 
 ```bash
-PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path') && eval $("$PLUGIN/scripts/init-session.sh" --export) && echo "E=$E TID=$TID SID=$SID"
+PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path') && eval $("$PLUGIN/scripts/load-session.sh") && echo "E=$E TID=$TID SID=$SID"
 ```
 
 ## ⚡ STEP 2: GET YOUR ASSIGNED GOAL FROM PROMPT
@@ -30,6 +30,8 @@ if [ $? -ne 0 ]; then
     echo "Claim failed - another agent got this goal. Exiting."
     exit 0
 fi
+# CRITICAL: Mark spawn as claimed (prevents thundering herd OOM)
+"$SCRIPTS/spawn-track.sh" claimed "$STATE_DIR" >/dev/null 2>&1
 echo "Claimed $GOAL_ID"
 ```
 
@@ -141,7 +143,7 @@ You are assigned ONE goal by the skill. Work ONLY on that goal until it's solved
 ```bash
 # 1. Initialize (first call only)
 PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path')
-eval $("$PLUGIN/scripts/init-session.sh" --export)
+eval $("$PLUGIN/scripts/load-session.sh" --export)
 # Now you have: E, TID, SCRIPTS, SID, STATE_DIR, LEAN_PROJECT
 # E points to: $PLUGIN/scripts/ensue-api.sh
 # LEAN_PROJECT points to the Lean/Mathlib project for verification
@@ -155,6 +157,8 @@ if [ $? -ne 0 ]; then
     echo "Claim failed. Exiting."
     exit 0
 fi
+# Mark spawn as claimed (prevents OOM from thundering herd)
+"$SCRIPTS/spawn-track.sh" claimed "$STATE_DIR" >/dev/null 2>&1
 
 # 4. Get goal info and prove
 GOAL_INFO=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition","proofs/'"$TID"'/goals/'"$GOAL_ID"'/leaf_type"]}')
@@ -199,7 +203,7 @@ $E search_memories '{"query":"...","prefix":"proofs/$TID/tactics/library/","limi
 
 ```bash
 # GID is set from your prompt (e.g., "Prove goal root-intro" -> GOAL_ID=root-intro)
-# E, TID, SCRIPTS, SID are set from init-session.sh
+# E, TID, SCRIPTS, SID are set from load-session.sh
 
 # 1. Claim your assigned goal
 CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GOAL_ID" "prover" "$SID")
@@ -207,6 +211,8 @@ if [ $? -ne 0 ]; then
     echo "Claim failed - another agent got $GOAL_ID. Exiting."
     exit 0
 fi
+# Mark spawn as claimed (prevents OOM)
+"$SCRIPTS/spawn-track.sh" claimed "$STATE_DIR" >/dev/null 2>&1
 
 # 2. Get goal info
 GOAL_INFO=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition","proofs/'"$TID"'/goals/'"$GOAL_ID"'/leaf_type"]}')
@@ -353,9 +359,48 @@ $E get_memory "{\"key_names\":[\"proofs/$TID/goals/$GOAL_ID/leaf_type\",\"proofs
 | `leaf_type` | Your Action |
 |-------------|-------------|
 | `decidable` | Use `norm_num`, `native_decide`, `omega`, `ring` |
-| `discoverable` | Use the `discovery.search` terms to find lemmas |
+| `discoverable` | **MATHLIB SEARCH REQUIRED** - see below |
 | `algebraic` | Use `ring`, `field_simp`, rewrite rules |
 | (not set) | Fall back to MATH CARD reasoning |
+
+## 🔬 DISCOVERABLE GOALS: MATHLIB SEARCH PROTOCOL
+
+**⚠️ CRITICAL: Goals with `leaf_type: discoverable` need Mathlib lemma lookup, NOT basic tactics!**
+
+These goals contain patterns like `ConcaveOn`, `AntitoneOn`, `DifferentiableOn`, etc. that require finding the right Mathlib lemma.
+
+**MANDATORY 3-step protocol for discoverable goals:**
+
+```bash
+# 1. SEARCH for the lemma
+$E search_memories '{"query":"ConcaveOn antitone deriv","prefix":"tactics/library/","limit":5}'
+
+# 2. VERIFY lemma exists (use #check)
+cat > /tmp/chk.lean << 'EOF'
+import Mathlib
+#check @ConcaveOn.antitoneOn_deriv
+EOF
+cd "$LEAN_PROJECT" && lake env lean /tmp/chk.lean 2>&1
+
+# 3. APPLY the verified lemma
+# exact ConcaveOn.antitoneOn_deriv hf hf_diff
+```
+
+**Common discoverable patterns and their lemmas:**
+
+| Goal Pattern | Mathlib Lemma |
+|--------------|---------------|
+| `AntitoneOn (deriv f) ...` when `ConcaveOn f` | `ConcaveOn.antitoneOn_deriv` |
+| `MonotoneOn (deriv f) ...` when `ConvexOn f` | `ConvexOn.monotoneOn_deriv` |
+| `∫ ... = f b - f a` | `intervalIntegral.integral_eq_sub_of_hasDerivAt` |
+| `ContDiffOn ℝ n f ...` | Check composition rules, `ContDiff.contDiffOn` |
+| `DifferentiableOn ℝ f ...` | `ContDiffOn.differentiableOn`, or from hypotheses |
+
+**If you can't find the lemma after search:**
+1. Mark goal as `needs_decomposition`
+2. Record what you searched for so decomposer can try different approach
+
+**Add [MATHLIB_AWARE] to your prompt when calling prover on discoverable goals.**
 
 **If `discovery` exists, use it:**
 ```json
@@ -455,7 +500,7 @@ exact left_case_lemma y hy
 **ALWAYS use `verify-goal.sh` instead of raw Lean invocation. It checks decomposability FIRST.**
 
 ```bash
-# Use SCRIPTS from init-session.sh (already set)
+# Use SCRIPTS from load-session.sh (already set)
 PROJECT_DIR="$(pwd)"
 
 # Get goal definition from Ensue (with null handling)
@@ -515,7 +560,7 @@ jq -r '.results[0].value // empty'
 **You MUST run this script before attempting ANY tactic:**
 
 ```bash
-# SCRIPTS is set by init-session.sh (already exported)
+# SCRIPTS is set by load-session.sh (already exported)
 SUGGESTIONS=$("$SCRIPTS/pre-verify.sh" "$TID" "$GOAL_ID" "$GOAL_TYPE" 2>&1)
 EXIT_CODE=$?
 
@@ -1037,7 +1082,7 @@ A mathematician won't accept axioms for high-level goals. Only leaf-level lemmas
 
 ```bash
 # 1. Check if we're deep enough to axiomatize
-MAX_DEPTH=${MAX_DEPTH:-3}  # From init-session.sh
+MAX_DEPTH=${MAX_DEPTH:-3}  # From load-session.sh
 GOAL_DEF=$($E get_memory '{"key_names":["proofs/'$TID'/goals/'$GOAL_ID'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
 GOAL_DEPTH=$(echo "$GOAL_DEF" | jq -r '.depth // 0')
 

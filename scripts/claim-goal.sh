@@ -27,7 +27,30 @@ E="$SCRIPT_DIR/ensue-api.sh"
 CURRENT=$("$E" get_memory "{\"key_names\":[\"proofs/$TID/goals/$GID/status\"]}" 2>/dev/null | jq -r '.result.structuredContent.results[0].value // empty')
 
 if [[ "$CURRENT" == working:* ]]; then
-    # Already claimed by someone - fail immediately
+    # Already claimed - check if we should allow this agent to proceed
+
+    # If claimed by orchestrator (skill-*) and we're a worker agent (decomposer/prover), TAKE OVER
+    if [[ "$CURRENT" == working:skill-* ]] && [[ "$AGENT" == "decomposer" || "$AGENT" == "prover" ]]; then
+        # UPDATE status to show agent took over (prevents orchestrator from spawning more)
+        NEW_STATUS="working:$AGENT-$SID:$(date +%s)"
+        "$E" update_memory "{\"key_name\":\"proofs/$TID/goals/$GID/status\",\"value\":\"$NEW_STATUS\"}" >/dev/null 2>&1
+        echo "{\"success\":true,\"status\":\"$NEW_STATUS\",\"sid\":\"$SID\",\"inherited\":true}"
+        exit 0
+    fi
+
+    # If already claimed by a decomposer/prover (not skill-*), reject - agent already working
+    if [[ "$CURRENT" == working:decomposer-* ]] || [[ "$CURRENT" == working:prover-* ]]; then
+        echo "{\"success\":false,\"status\":\"$CURRENT\",\"sid\":\"$SID\",\"error\":\"Already claimed by worker agent\"}"
+        exit 1
+    fi
+
+    # If our SID matches the claim, allow
+    if [[ "$CURRENT" == *"$SID"* ]]; then
+        echo "{\"success\":true,\"status\":\"$CURRENT\",\"sid\":\"$SID\",\"inherited\":true}"
+        exit 0
+    fi
+
+    # Different session - fail
     echo "{\"success\":false,\"status\":\"$CURRENT\",\"sid\":\"$SID\",\"error\":\"Already claimed\"}"
     exit 1
 fi

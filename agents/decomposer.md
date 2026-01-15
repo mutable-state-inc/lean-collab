@@ -10,10 +10,10 @@ tools:
 
 **You break proof goals into smaller subgoals. You NEVER verify tactics or run Lean.**
 
-## ⚡ STEP 1: INIT
+## ⚡ STEP 1: LOAD SESSION
 
 ```bash
-PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path') && eval $("$PLUGIN/scripts/init-session.sh" --export) && echo "E=$E TID=$TID SID=$SID"
+PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path') && eval $("$PLUGIN/scripts/load-session.sh") && echo "E=$E TID=$TID SID=$SID"
 ```
 
 ## ⚡ STEP 2: GET YOUR ASSIGNED GOAL FROM PROMPT
@@ -31,6 +31,8 @@ if [ $? -ne 0 ]; then
     echo "Claim failed - another agent got this goal. Exiting."
     exit 0
 fi
+# CRITICAL: Mark spawn as claimed (prevents thundering herd OOM)
+"$SCRIPTS/spawn-track.sh" claimed "$STATE_DIR" >/dev/null 2>&1
 echo "Claimed $GOAL_ID"
 ```
 
@@ -123,7 +125,7 @@ You are assigned ONE goal by the skill. Work ONLY on that goal. Do NOT search fo
 ```bash
 # 1. Initialize (first call only)
 PLUGIN=$(cat .lean-collab.json | jq -r '.plugin_path')
-eval $("$PLUGIN/scripts/init-session.sh" --export)
+eval $("$PLUGIN/scripts/load-session.sh" --export)
 # Now you have: E, TID, SCRIPTS, SID, STATE_DIR, LEAN_PROJECT
 # E points to: $PLUGIN/scripts/ensue-api.sh
 
@@ -136,6 +138,8 @@ if [ $? -ne 0 ]; then
     echo "Claim failed. Exiting."
     exit 0
 fi
+# Mark spawn as claimed (prevents OOM from thundering herd)
+"$SCRIPTS/spawn-track.sh" claimed "$STATE_DIR" >/dev/null 2>&1
 
 # 4. Read and decompose
 GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
@@ -198,7 +202,7 @@ jq -r '.result.structuredContent.results[0].value // empty'
 
 ```bash
 # GID is set from your prompt (e.g., "Decompose goal root" -> GOAL_ID=root)
-# E, TID, SCRIPTS, SID are set from init-session.sh
+# E, TID, SCRIPTS, SID are set from load-session.sh
 
 # 1. Claim your assigned goal
 CLAIM=$("$SCRIPTS/claim-goal.sh" "$TID" "$GOAL_ID" "decomposer" "$SID")
@@ -206,6 +210,8 @@ if [ $? -ne 0 ]; then
     echo "Claim failed - another agent got $GOAL_ID. Exiting."
     exit 0
 fi
+# Mark spawn as claimed (prevents OOM)
+"$SCRIPTS/spawn-track.sh" claimed "$STATE_DIR" >/dev/null 2>&1
 
 # 2. Read goal definition
 GOAL_DEF=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition"]}' | jq -r '.result.structuredContent.results[0].value // empty')
@@ -470,7 +476,7 @@ For `IsLeast {n | P n} answer`:
 For Putnam 2023 A1 (`IsLeast {n : ℕ | 0 < n ∧ n * (n + 1) * (2 * n + 1) / 6 > 2023} 18`):
 
 ```bash
-# E is already set from init-session.sh
+# E is already set from load-session.sh
 
 # FIRST: Get current goal's depth (root has depth 0)
 PARENT_DEPTH=$($E get_memory '{"key_names":["proofs/putnam-2023-a1/goals/root/depth"]}' | jq -r '.result.structuredContent.results[0].value // "0"')
