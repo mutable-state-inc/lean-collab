@@ -198,7 +198,7 @@ WHAT=$(echo "$ACTION" | jq -r '.action')
 
 ### Step 3: Claiming and Spawning Agents
 
-**⚠️ CRITICAL: CLAIM BEFORE SPAWNING, TRACK SPAWNS TO PREVENT OOM**
+**⚠️ CRITICAL: CLAIM BEFORE SPAWNING**
 
 For each goal in the claim list:
 
@@ -207,9 +207,8 @@ For each goal in the claim list:
 if "$SCRIPTS/claim-goal.sh" "$TID" "$GOAL_ID" "skill" "$SID"; then
     # 2. USE route-goal.sh TO DECIDE AGENT TYPE (MANDATORY!)
     AGENT_TYPE=$("$SCRIPTS/route-goal.sh" "$TID" "$GOAL_ID")
-    # 3. TRACK SPAWN (prevents thundering herd - CRITICAL!)
-    "$SCRIPTS/spawn-track.sh" start "$STATE_DIR"
-    # 4. THEN spawn the correct agent based on routing
+    # 3. THEN spawn the correct agent based on routing
+    # (throttling is enforced automatically by the hook)
 fi
 ```
 

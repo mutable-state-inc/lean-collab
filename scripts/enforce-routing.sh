@@ -26,13 +26,46 @@ SUBAGENT_TYPE=$(echo "$TOOL_INPUT" | jq -r '.subagent_type // empty')
 
 # Only check lean-collab routing
 case "$SUBAGENT_TYPE" in
-    lean-collab:decomposer|lean-collab:lean-prover)
+    lean-collab:decomposer|lean-collab:lean-prover|lean-collab:lean-composer)
         ;;
     *)
         echo '{"decision":"approve"}'
         exit 0
         ;;
 esac
+
+# === SPAWN THROTTLING (queries Ensue directly - no local state) ===
+PLUGIN_PATH=$(cat .lean-collab.json 2>/dev/null | jq -r '.plugin_path // empty')
+TID=$(cat .lean-collab.json 2>/dev/null | jq -r '.theorem_id // empty')
+MAX_PARALLEL=$(cat .lean-collab.json 2>/dev/null | jq -r '.max_parallel_agents // 9')
+
+if [ -n "$PLUGIN_PATH" ] && [ -n "$TID" ]; then
+    E="$PLUGIN_PATH/scripts/ensue-api.sh"
+
+    # Query Ensue for all goal statuses
+    STATUSES=$("$E" list_keys "{\"prefix\":\"proofs/$TID/goals/\",\"limit\":500}" 2>/dev/null | \
+        jq -r '.result.structuredContent.keys[].key_name' 2>/dev/null | grep '/status$')
+
+    if [ -n "$STATUSES" ]; then
+        # Batch get all statuses
+        KEY_ARRAY=$(echo "$STATUSES" | while read key; do echo "\"$key\""; done | tr '\n' ',' | sed 's/,$//')
+        WORKING_COUNT=$("$E" get_memory "{\"key_names\":[$KEY_ARRAY]}" 2>/dev/null | \
+            jq -r '.result.structuredContent.results[].value' 2>/dev/null | grep -c '^working:' || echo 0)
+
+        if [ "$WORKING_COUNT" -ge "$MAX_PARALLEL" ]; then
+            log "THROTTLE: $WORKING_COUNT working >= $MAX_PARALLEL max"
+            cat << ENDJSON
+{
+  "decision": "block",
+  "reason": "SPAWN_THROTTLE",
+  "message": "At capacity: $WORKING_COUNT agents working (max: $MAX_PARALLEL). Wait for agents to finish."
+}
+ENDJSON
+            exit 0
+        fi
+        log "SPAWN_OK: $WORKING_COUNT working < $MAX_PARALLEL max"
+    fi
+fi
 
 # Extract goal ID from prompt
 PROMPT=$(echo "$TOOL_INPUT" | jq -r '.prompt // empty')
@@ -87,8 +120,8 @@ if [ "$SUBAGENT_TYPE" = "lean-collab:decomposer" ]; then
     fi
     GOAL_DEPTH=${GOAL_DEPTH:-0}
 
-    # Calculate checkpoint interval (every 1/16 of max depth = ~2 depths)
-    CHECKPOINT_INTERVAL=$((MAX_DEPTH / 16))
+    # Calculate checkpoint interval (every 1/2 of max depth)
+    CHECKPOINT_INTERVAL=$((MAX_DEPTH / 2))
     [ "$CHECKPOINT_INTERVAL" -lt 1 ] && CHECKPOINT_INTERVAL=1
 
     # Check if at checkpoint depth

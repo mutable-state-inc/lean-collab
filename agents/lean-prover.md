@@ -31,7 +31,6 @@ if [ $? -ne 0 ]; then
     exit 0
 fi
 # CRITICAL: Mark spawn as claimed (prevents thundering herd OOM)
-"$SCRIPTS/spawn-track.sh" claimed "$STATE_DIR" >/dev/null 2>&1
 echo "Claimed $GOAL_ID"
 ```
 
@@ -158,7 +157,6 @@ if [ $? -ne 0 ]; then
     exit 0
 fi
 # Mark spawn as claimed (prevents OOM from thundering herd)
-"$SCRIPTS/spawn-track.sh" claimed "$STATE_DIR" >/dev/null 2>&1
 
 # 4. Get goal info and prove
 GOAL_INFO=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition","proofs/'"$TID"'/goals/'"$GOAL_ID"'/leaf_type"]}')
@@ -212,7 +210,6 @@ if [ $? -ne 0 ]; then
     exit 0
 fi
 # Mark spawn as claimed (prevents OOM)
-"$SCRIPTS/spawn-track.sh" claimed "$STATE_DIR" >/dev/null 2>&1
 
 # 2. Get goal info
 GOAL_INFO=$($E get_memory '{"key_names":["proofs/'"$TID"'/goals/'"$GOAL_ID"'/definition","proofs/'"$TID"'/goals/'"$GOAL_ID"'/leaf_type"]}')

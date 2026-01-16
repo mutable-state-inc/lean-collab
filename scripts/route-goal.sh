@@ -32,14 +32,17 @@ if [ -z "$MAX_DEPTH" ] && [ -f ".lean-collab.json" ]; then
 fi
 MAX_DEPTH="${MAX_DEPTH:-35}"
 
-# Fetch goal definition and leaf_type in one call
-RESULT=$("$E" get_memory "{\"key_names\":[\"proofs/$TID/goals/$GOAL_ID/definition\",\"proofs/$TID/goals/$GOAL_ID/leaf_type\"]}" 2>/dev/null)
+# Fetch goal definition, leaf_type, and depth in one call
+RESULT=$("$E" get_memory "{\"key_names\":[\"proofs/$TID/goals/$GOAL_ID/definition\",\"proofs/$TID/goals/$GOAL_ID/leaf_type\",\"proofs/$TID/goals/$GOAL_ID/depth\"]}" 2>/dev/null)
 
 GOAL_DEF=$(echo "$RESULT" | jq -r '.result.structuredContent.results[0].value // "{}"')
 LEAF_TYPE=$(echo "$RESULT" | jq -r '.result.structuredContent.results[1].value // empty')
+GOAL_DEPTH=$(echo "$RESULT" | jq -r '.result.structuredContent.results[2].value // "0"')
 
 GOAL_TYPE=$(echo "$GOAL_DEF" | jq -r '.type // ""')
-GOAL_DEPTH=$(echo "$GOAL_DEF" | jq -r '.depth // 0')
+# Handle depth as string or number
+GOAL_DEPTH=$(echo "$GOAL_DEPTH" | tr -d '"' | tr -d '[:space:]')
+[ -z "$GOAL_DEPTH" ] && GOAL_DEPTH=0
 
 # Step 1: If leaf_type is set, decomposer already marked it as provable → prover
 # This MUST come first - if decomposer says it's a leaf, respect that decision
