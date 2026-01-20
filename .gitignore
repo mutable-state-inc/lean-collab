@@ -1,1 +1,6 @@
 .ensue-key
+target
+bin
+.lean-collab.json
+workspace
+.claude

@@ -1,2 +1,0 @@
-# Lean interaction
--e ../leantree
