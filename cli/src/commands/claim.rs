@@ -2,14 +2,96 @@
 //!
 //! Uses optimistic concurrency: write claim, then re-read to verify we won.
 //! This handles race conditions where multiple sessions try to claim simultaneously.
+//!
+//! Also enforces max_parallel_agents via local slot files with PID tracking.
+//! Each slot file contains the PID of the agent holding it. Dead PIDs are reclaimed.
 
 use anyhow::Result;
 use chrono::Utc;
 use std::time::Duration;
+use std::fs;
+use std::io::{Read, Write};
 
 use crate::config::load_config;
 use crate::ensue::EnsueClient;
 use crate::goal::{Goal, GoalState, ClaimRecord, ClaimOutcome};
+
+/// Check if a process with given PID is still alive
+fn is_pid_alive(pid: u32) -> bool {
+    // On Unix, kill with signal 0 checks if process exists
+    #[cfg(unix)]
+    {
+        let result = unsafe { libc::kill(pid as i32, 0) };
+        if result == 0 {
+            true // Process exists and we can signal it
+        } else {
+            // Check errno: EPERM means process exists but we can't signal it
+            // ESRCH means no such process
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            errno == libc::EPERM // EPERM means process exists
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // On non-Unix, assume alive (conservative)
+        true
+    }
+}
+
+/// Try to acquire a slot, returns slot number if successful
+fn acquire_slot(slots_dir: &std::path::Path, max_slots: u32, our_pid: u32) -> Option<u32> {
+    for i in 0..max_slots {
+        let slot_file = slots_dir.join(format!("{}.lock", i));
+
+        // Try to read existing PID
+        let slot_available = if slot_file.exists() {
+            match fs::File::open(&slot_file).and_then(|mut f| {
+                let mut contents = String::new();
+                f.read_to_string(&mut contents)?;
+                Ok(contents)
+            }) {
+                Ok(contents) => {
+                    let contents = contents.trim();
+                    if contents.is_empty() {
+                        true // Empty file, slot available
+                    } else if let Ok(pid) = contents.parse::<u32>() {
+                        !is_pid_alive(pid) // Available if PID is dead
+                    } else {
+                        true // Invalid content, slot available
+                    }
+                }
+                Err(_) => true, // Can't read, assume available
+            }
+        } else {
+            true // File doesn't exist, slot available
+        };
+
+        if slot_available {
+            // Try to claim this slot by writing our PID
+            if let Ok(mut f) = fs::File::create(&slot_file) {
+                if f.write_all(our_pid.to_string().as_bytes()).is_ok() {
+                    return Some(i);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Release a slot by clearing the PID file
+pub fn release_slot(slots_dir: &std::path::Path, max_slots: u32, our_pid: u32) -> bool {
+    for i in 0..max_slots {
+        let slot_file = slots_dir.join(format!("{}.lock", i));
+        if let Ok(contents) = fs::read_to_string(&slot_file) {
+            if contents.trim().parse::<u32>().ok() == Some(our_pid) {
+                // This is our slot, clear it
+                let _ = fs::write(&slot_file, "");
+                return true;
+            }
+        }
+    }
+    false
+}
 
 /// Generate a unique claim ID for this session
 fn generate_claim_id() -> String {
@@ -22,6 +104,26 @@ fn generate_claim_id() -> String {
 pub async fn run(goal_id: &str, agent: Option<&str>, ttl: u64) -> Result<()> {
     let config = load_config()?;
     let client = EnsueClient::from_config(&config);
+
+    // Get parent PID (the agent process that spawned us)
+    let parent_pid = std::os::unix::process::parent_id();
+
+    // Try to acquire a local slot (enforces max_parallel_agents)
+    let slots_dir = config.slots_dir();
+    if slots_dir.exists() {
+        if acquire_slot(&slots_dir, config.max_parallel_agents, parent_pid).is_none() {
+            // No slots available - at capacity
+            let result = serde_json::json!({
+                "success": false,
+                "error": "capacity_exceeded",
+                "goal_id": goal_id,
+                "max_parallel_agents": config.max_parallel_agents,
+                "message": "All agent slots are in use. Wait for an agent to finish.",
+            });
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
+        }
+    }
 
     // Generate unique claim ID for optimistic concurrency
     let claim_id = generate_claim_id();

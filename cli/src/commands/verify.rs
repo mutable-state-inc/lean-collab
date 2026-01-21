@@ -11,7 +11,7 @@ use std::process::Command;
 
 use crate::config::load_config;
 use crate::ensue::{CreateMemoryItem, EmbedSource, EnsueClient};
-use crate::goal::{Goal, GoalState, StrategyAttempt, StrategyCategory, StrategyStatus};
+use crate::goal::{ClaimOutcome, Goal, GoalState, StrategyAttempt, StrategyCategory, StrategyStatus};
 
 /// Hash a goal type for strategy lookup
 fn hash_goal_type(goal_type: &str) -> String {
@@ -35,7 +35,13 @@ fn generate_lean_code(goal_id: &str, goal: &Goal, tactic: &str, imports: &[Strin
     }
 
     // Build the example signature with hypotheses
-    if goal.hypotheses.is_empty() {
+    // Filter out empty strings that may have been stored
+    let valid_hypotheses: Vec<_> = goal.hypotheses
+        .iter()
+        .filter(|h| !h.trim().is_empty())
+        .collect();
+
+    if valid_hypotheses.is_empty() {
         // No context - simple example
         code.push_str(&format!(
             "example : {} := by\n  {}\n",
@@ -44,7 +50,7 @@ fn generate_lean_code(goal_id: &str, goal: &Goal, tactic: &str, imports: &[Strin
     } else {
         // Has hypotheses - include them in the signature
         // Format: example (x : ℝ) (hx : x ∈ Set.Icc 0 1) : goal := by
-        let hyp_str = goal.hypotheses
+        let hyp_str = valid_hypotheses
             .iter()
             .map(|h| format!("({})", h))
             .collect::<Vec<_>>()
@@ -124,6 +130,14 @@ pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>) -> R
                     imports: imports.clone(),
                     solved_at: now,
                 };
+
+                // Update claim history to mark as solved
+                if let Some(last_claim) = goal.claim_history.last_mut() {
+                    if last_claim.released_at.is_none() {
+                        last_claim.released_at = Some(now);
+                        last_claim.outcome = Some(ClaimOutcome::Solved);
+                    }
+                }
 
                 // Unsubscribe from solved goal
                 let _ = client.unsubscribe(&goal_key).await;

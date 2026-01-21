@@ -5,7 +5,7 @@ use chrono::Utc;
 
 use crate::config::load_config;
 use crate::ensue::EnsueClient;
-use crate::goal::{Goal, GoalState, StrategyAttempt, StrategyCategory, StrategyStatus};
+use crate::goal::{ClaimOutcome, Goal, GoalState, StrategyAttempt, StrategyCategory, StrategyStatus};
 
 pub async fn run(goal_id: &str, reason: &str) -> Result<()> {
     let config = load_config()?;
@@ -36,6 +36,14 @@ pub async fn run(goal_id: &str, reason: &str) -> Result<()> {
                 justification: reason.to_string(),
                 axiomatized_at: now,
             };
+
+            // Update claim history to mark as axiomatized
+            if let Some(last_claim) = goal.claim_history.last_mut() {
+                if last_claim.released_at.is_none() {
+                    last_claim.released_at = Some(now);
+                    last_claim.outcome = Some(ClaimOutcome::Axiomatized);
+                }
+            }
 
             // Save updated goal
             let goal_json = serde_json::to_string(&goal)?;

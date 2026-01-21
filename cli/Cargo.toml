@@ -42,6 +42,13 @@ uuid = { version = "1.6", features = ["v4"] }
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
 
+# File locking for semaphore
+fs2 = "0.4"
+
+# Unix process checking
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.release]
 opt-level = 3
 lto = true

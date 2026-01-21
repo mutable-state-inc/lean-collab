@@ -3,11 +3,13 @@
 use anyhow::Result;
 use eventsource_client::Client;
 use futures::StreamExt;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 use crate::config::load_config;
 use crate::ensue::DEFAULT_SSE_URL;
 
-pub async fn run(prefix: Option<&str>) -> Result<()> {
+pub async fn run(prefix: Option<&str>, output: Option<&str>) -> Result<()> {
     let config = load_config()?;
     let filter_prefix = prefix.unwrap_or(&config.theorem_id);
 
@@ -16,6 +18,18 @@ pub async fn run(prefix: Option<&str>) -> Result<()> {
 
     eprintln!("Connecting to {} ...", sse_url);
     eprintln!("Filtering for prefix: {}", filter_prefix);
+
+    // Open output file if specified
+    let mut output_file = if let Some(path) = output {
+        eprintln!("Writing events to: {}", path);
+        Some(OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(true)
+            .open(path)?)
+    } else {
+        None
+    };
 
     // Create SSE client
     let client = eventsource_client::ClientBuilder::for_url(sse_url)?
@@ -42,8 +56,13 @@ pub async fn run(prefix: Option<&str>) -> Result<()> {
 
                     // Check if URI matches our filter prefix
                     if uri.contains(filter_prefix) {
-                        // Output as JSON line to stdout
-                        println!("{}", data);
+                        // Output as JSON line
+                        if let Some(ref mut file) = output_file {
+                            writeln!(file, "{}", data)?;
+                            file.flush()?;
+                        } else {
+                            println!("{}", data);
+                        }
                     }
                 }
             }

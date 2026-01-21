@@ -6,10 +6,18 @@ use chrono::Utc;
 use crate::config::load_config;
 use crate::ensue::EnsueClient;
 use crate::goal::{Goal, GoalState, ClaimOutcome};
+use crate::commands::claim::release_slot;
 
 pub async fn run(goal_id: &str, agent: Option<&str>) -> Result<()> {
     let config = load_config()?;
     let client = EnsueClient::from_config(&config);
+
+    // Release local slot (enforces max_parallel_agents)
+    let parent_pid = std::os::unix::process::parent_id();
+    let slots_dir = config.slots_dir();
+    if slots_dir.exists() {
+        release_slot(&slots_dir, config.max_parallel_agents, parent_pid);
+    }
 
     let agent_id = agent.unwrap_or("unknown");
     let goal_key = format!("{}/{}", config.goals_prefix(), goal_id);

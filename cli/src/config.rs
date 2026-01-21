@@ -101,6 +101,11 @@ impl LoadedConfig {
     pub fn strategies_prefix(&self) -> String {
         "strategies".to_string()
     }
+
+    /// Local slots directory for flock semaphore
+    pub fn slots_dir(&self) -> PathBuf {
+        self.workspace.join(".slots")
+    }
 }
 
 /// Load config from files with env var overrides for tunable settings
@@ -203,11 +208,21 @@ pub fn ensure_workspace(config: &LoadedConfig) -> Result<()> {
         config.workspace.join("proofs"),
         config.workspace.join("output"),
         config.workspace.join("logs"),
+        config.slots_dir(),
     ];
 
     for dir in &dirs {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("Failed to create {}", dir.display()))?;
+    }
+
+    // Create slot files for flock semaphore (one per max_parallel_agents)
+    for i in 0..config.max_parallel_agents {
+        let slot_file = config.slots_dir().join(format!("{}.lock", i));
+        if !slot_file.exists() {
+            std::fs::File::create(&slot_file)
+                .with_context(|| format!("Failed to create slot file {}", slot_file.display()))?;
+        }
     }
 
     Ok(())

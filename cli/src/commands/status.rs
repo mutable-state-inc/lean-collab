@@ -152,6 +152,11 @@ async fn get_theorem_summary(
     // Ready to compose when all leaf goals are solved/axiomatized and none are open/working
     let ready_to_compose = total > 0 && open == 0 && working == 0;
 
+    // Limit open_goals to available capacity (enforce max_parallel_agents at CLI level)
+    let working_count = working_goals.len();
+    let available_capacity = (config.max_parallel_agents as usize).saturating_sub(working_count);
+    let claimable_goals: Vec<_> = open_goals.into_iter().take(available_capacity).collect();
+
     Ok(serde_json::json!({
         "success": true,
         "theorem_id": config.theorem_id,
@@ -167,7 +172,9 @@ async fn get_theorem_summary(
             "abandoned": counters.get("abandoned").copied().unwrap_or(0),
         },
         "ready_to_compose": ready_to_compose,
-        "open_goals": open_goals,
+        "open_goals": claimable_goals,
+        "open_goals_total": open,
+        "available_capacity": available_capacity,
         "working_goals": working_goals,
         "config": {
             "max_parallel_agents": config.max_parallel_agents,

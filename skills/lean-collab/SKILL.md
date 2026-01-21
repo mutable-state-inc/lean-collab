@@ -15,6 +15,33 @@ description: "Collaborative theorem proving orchestrator. Uses lc CLI for state,
 - **KEEP RUNNING** until compose succeeds
 - **If goals are working (not open) → KEEP WAITING** for new goals to appear
 
+## PROOF RIGOR PHILOSOPHY
+
+**We produce proofs that satisfy math professors. Axioms are unacceptable shortcuts.**
+
+### Axiom Policy
+
+| Depth | Axiom Allowed? | Action on Failure |
+|-------|----------------|-------------------|
+| < max_depth - 2 | **NO** | Always backtrack for better decomposition |
+| >= max_depth - 2 | Only if atomic + cited | Prefer backtrack, axiom is last resort |
+
+### What's Acceptable to Axiomatize (rare)
+
+- `0 < Real.pi` (atomic constant, Mathlib: `Real.pi_pos`)
+- `Real.sin 0 = 0` (atomic evaluation, Mathlib: `Real.sin_zero`)
+- Import failures for known Mathlib lemmas (cite the lemma)
+
+### What's NOT Acceptable to Axiomatize
+
+- `sin x ≤ f(x)` - This is THE PROBLEM, not an axiom!
+- Any inequality that requires analysis
+- Anything that could be decomposed further
+
+### Backtrack > Axiom
+
+When a prover fails, it should backtrack to let decomposer try a different strategy. Multiple backtrack cycles are GOOD - they explore the proof space. Axioms are BAD - they leave holes.
+
 ## FIRST: Check for Existing Work
 
 **Before doing ANYTHING else, run:**
@@ -127,25 +154,63 @@ otherwise          → Decidable
 
 ## Main Loop
 
-```
-1. Start listener in background:
-   ./bin/lc listen (run_in_background=true)
+**Event-driven with timeout fallback. React to events, but don't block forever.**
 
-2. CHECK FOR WORK:
-   a. ./bin/lc status
-   b. If ready_to_compose → spawn composer (foreground), then DONE
-   c. For each open goal → spawn agent (background)
-   d. If spawn BLOCKED → skip, try next
+### Step 1: Start Listener FIRST (once only)
 
-3. WAIT FOR EVENT:
-   - Check listener output for new events
-   - On any event → GOTO 2 immediately
-   - If no event after 5s → GOTO 2 anyway (fallback)
+```bash
+./bin/lc listen --prefix proofs/{theorem_id}/ --output workspace/events.jsonl
 ```
 
-**KEEP RUNNING.** Even if all goals are "working", new goals will appear when agents finish.
+**Run with `run_in_background=true`.** This runs for the entire session.
 
-**CRITICAL: NEVER read agent output files. ONLY use `./bin/lc status`.**
+### Step 2: Check Status & Spawn Agents
+
+```bash
+./bin/lc status
+```
+
+- If `ready_to_compose` → run composer, DONE
+- For each `open_goals` → spawn appropriate agent (background)
+
+### Step 3: Wait for Events (with timeout)
+
+**Wait for new events, but don't block forever:**
+
+```bash
+timeout 45 tail -f workspace/events.jsonl
+```
+
+- **Event arrives** → go to Step 2 immediately
+- **Timeout (45s)** → go to Step 2 anyway (catch anything missed)
+
+**Events look like:**
+```json
+{"method":"notifications/resources/updated","params":{"uri":"memory:///proofs/.../goals/root"}}
+```
+
+### ⛔ ANTI-PATTERN (wasteful polling):
+
+```bash
+# WRONG - tight polling loop
+sleep 5 && ./bin/lc status
+sleep 5 && ./bin/lc status
+sleep 5 && ./bin/lc status
+```
+
+### ✅ CORRECT PATTERN:
+
+```bash
+# 1. Start listener once
+./bin/lc listen --prefix proofs/theorem/ --output workspace/events.jsonl &
+
+# 2. Loop: check status → spawn → wait for events (with timeout) → repeat
+while not ready_to_compose:
+    ./bin/lc status → spawn agents for open_goals
+    timeout 45 tail -f workspace/events.jsonl  # blocks until event OR timeout
+```
+
+**Key principle:** One status check per iteration, not one per agent. Stay active via timeout fallback.
 
 ---
 
@@ -186,12 +251,23 @@ Returns: `goal_type`, `state`, `depth`, `hypotheses`, `has_quantifiers`, `has_tr
    → prover (norm_num, decide)
 
 4. has_transcendentals is true?
-   → YOUR JUDGMENT:
-     - If goal looks decomposable (compound structure) → decomposer
-     - If goal looks like leaf inequality → prover
+   → Apply TRANSCENDENTAL PHILOSOPHY (see below)
 
 5. Otherwise → prover
 ```
+
+### Transcendental Philosophy
+
+When `has_transcendentals` is true, ask: **"Point evaluation or behavior analysis?"**
+
+| Question | Example | Agent |
+|----------|---------|-------|
+| Can this be solved by evaluating at specific points? | `sin 0 = 0`, `cos π = -1`, `π > 3` | prover |
+| Does this require understanding how the function behaves across a domain? | `sin x ≤ f(x)` for x ∈ [0,π], bounds requiring calculus | decomposer |
+
+**The test:** "Does proving this require reasoning about derivatives, extrema, or function shape?"
+- YES → decomposer (needs calculus setup: find critical points, analyze convexity)
+- NO → prover (apply known Mathlib lemmas)
 
 ### Quick Reference
 
@@ -200,7 +276,7 @@ Returns: `goal_type`, `state`, `depth`, `hypotheses`, `has_quantifiers`, `has_tr
 | — | — | — | backtracked | decomposer |
 | true | — | — | open | decomposer |
 | false | true | — | open | prover |
-| false | false | true | open | judgment call |
+| false | false | true | open | **see philosophy above** |
 | false | false | false | open | prover |
 
 ---

@@ -17,7 +17,7 @@ pub async fn run(
     goal_type: &str,
     parent: Option<&str>,
     depth: u32,
-    hypotheses: Option<Vec<String>>,
+    hypotheses: Vec<String>,
 ) -> Result<()> {
     let config = load_config()?;
     let client = EnsueClient::from_config(&config);
@@ -52,6 +52,9 @@ pub async fn run(
     let goal = Goal::analyze(id, goal_type, depth, parent.map(|s| s.to_string()));
 
     // Build full goal JSON (Goal::analyze creates basic structure, we enhance it)
+    // Filter out empty strings from hypotheses (allows --hypotheses "" for no hypotheses)
+    let filtered_hypotheses: Vec<String> = hypotheses.into_iter().filter(|h| !h.is_empty()).collect();
+
     let now = Utc::now().timestamp();
     let goal_json = serde_json::json!({
         "id": id,
@@ -59,7 +62,7 @@ pub async fn run(
         "state": { "state": "open" },
         "depth": depth,
         "parent": parent,
-        "hypotheses": hypotheses.unwrap_or_default(),
+        "hypotheses": filtered_hypotheses,
 
         "has_quantifiers": goal.has_quantifiers,
         "has_transcendentals": goal.has_transcendentals,

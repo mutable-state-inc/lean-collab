@@ -44,6 +44,10 @@ enum Commands {
         /// Filter events by prefix (e.g., "proofs/my-theorem")
         #[arg(long)]
         prefix: Option<String>,
+
+        /// Output file path (defaults to stdout)
+        #[arg(long, short)]
+        output: Option<String>,
     },
 
     /// Query comprehensive goal/theorem metadata
@@ -173,9 +177,9 @@ enum Commands {
         #[arg(long)]
         depth: u32,
 
-        /// Hypotheses available (comma-separated)
+        /// Hypotheses available (comma-separated). Use empty string "" for goals with no hypotheses.
         #[arg(long, value_delimiter = ',')]
-        hypotheses: Option<Vec<String>>,
+        hypotheses: Vec<String>,
     },
 
     /// Search collective intelligence for tactics or strategies
@@ -210,7 +214,7 @@ async fn main() -> Result<()> {
             create_root,
         } => init::run(max_agents, max_depth, theorem.as_deref(), create_root).await,
 
-        Commands::Listen { prefix } => listen::run(prefix.as_deref()).await,
+        Commands::Listen { prefix, output } => listen::run(prefix.as_deref(), output.as_deref()).await,
 
         Commands::Status { goal_id, watch } => status::run(goal_id.as_deref(), watch).await,
 

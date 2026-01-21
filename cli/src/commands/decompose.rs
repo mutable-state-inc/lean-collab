@@ -7,7 +7,7 @@ use chrono::Utc;
 
 use crate::config::load_config;
 use crate::ensue::EnsueClient;
-use crate::goal::{Goal, GoalState};
+use crate::goal::{ClaimOutcome, Goal, GoalState};
 
 pub async fn run(
     goal_id: &str,
@@ -38,6 +38,14 @@ pub async fn run(
                         strategy: strategy.to_string(),
                         decomposed_at: now,
                     };
+
+                    // Update claim history to mark as decomposed
+                    if let Some(last_claim) = goal.claim_history.last_mut() {
+                        if last_claim.released_at.is_none() {
+                            last_claim.released_at = Some(now);
+                            last_claim.outcome = Some(ClaimOutcome::Decomposed);
+                        }
+                    }
 
                     // Unsubscribe from decomposed goal (children are subscribed separately)
                     let _ = client.unsubscribe(&goal_key).await;
