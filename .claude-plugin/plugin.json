@@ -7,7 +7,7 @@
     "email": "sai@ensue.dev"
   },
   "agents": ["./agents/decomposer.md", "./agents/lean-prover.md", "./agents/lean-composer.md"],
-  "skills": ["./skills/lean-collab"],
+  "skills": ["./skills/lean-collab", "./skills/lean-syntax", "./skills/mathlib-knowledge"],
   "hooks": {
     "SessionStart": [
       {

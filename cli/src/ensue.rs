@@ -77,6 +77,7 @@ pub struct Memory {
 /// Search result (includes value)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
+    #[serde(alias = "key_name")]
     pub key: String,
     pub value: Option<String>,
     pub description: Option<String>,

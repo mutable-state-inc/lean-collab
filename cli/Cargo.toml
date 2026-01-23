@@ -45,6 +45,12 @@ chrono = { version = "0.4", features = ["serde"] }
 # File locking for semaphore
 fs2 = "0.4"
 
+# Regex for parsing Lean output
+regex = "1.10"
+
+# Ctrl+C handling for warm server
+ctrlc = "3.4"
+
 # Unix process checking
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

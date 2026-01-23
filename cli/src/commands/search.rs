@@ -13,12 +13,9 @@ pub async fn run(query: &str, prefix: Option<&str>, limit: u32) -> Result<()> {
     let config = load_config()?;
     let client = EnsueClient::from_config(&config);
 
-    // Build query with prefix hint for better semantic search
-    let search_query = if let Some(p) = prefix {
-        format!("{} in {}", query, p)
-    } else {
-        query.to_string()
-    };
+    // Don't modify query - semantic search works better with clean queries
+    // Prefix filtering happens post-search
+    let search_query = query.to_string();
 
     let results = client
         .search_memories(&search_query, limit, None)

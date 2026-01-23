@@ -2,6 +2,8 @@
 //!
 //! Records failure both locally (goal.strategy_attempts) and globally
 //! (strategies/{hash}/{id}) for collective learning.
+//!
+//! IMPORTANT: Recursively abandons ALL descendants, not just direct children.
 
 use anyhow::Result;
 use chrono::Utc;
@@ -17,6 +19,30 @@ fn hash_goal_type(goal_type: &str) -> String {
     let mut hasher = DefaultHasher::new();
     goal_type.hash(&mut hasher);
     format!("{:x}", hasher.finish())
+}
+
+/// Abandon a single goal (non-recursive - just marks direct children)
+async fn abandon_goal(
+    client: &EnsueClient,
+    goals_prefix: &str,
+    goal_id: &str,
+    backtrack_attempt: u32,
+    now: i64,
+) -> Result<bool> {
+    let goal_key = format!("{}/{}", goals_prefix, goal_id);
+
+    if let Ok(Some(mem)) = client.get(&goal_key).await {
+        if let Ok(mut goal) = serde_json::from_str::<Goal>(&mem.value) {
+            goal.state = GoalState::Abandoned {
+                parent_backtrack_attempt: backtrack_attempt,
+                abandoned_at: now,
+            };
+            let goal_json = serde_json::to_string(&goal)?;
+            client.update_memory(&goal_key, &goal_json, false).await?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub async fn run(goal_id: &str, reason: Option<&str>) -> Result<()> {
@@ -39,20 +65,17 @@ pub async fn run(goal_id: &str, reason: Option<&str>) -> Result<()> {
                     let reason_str = reason.unwrap_or("decomposition failed");
                     let goal_hash = hash_goal_type(&goal.goal_type);
 
-                    // 1. Mark children as abandoned (preserving their history)
-                    let mut abandoned_children = Vec::new();
+                    // 1. Abandon direct children (not recursive - orchestrator handles re-decomposition)
+                    let mut abandoned_descendants = Vec::new();
                     for child_id in &children {
-                        let child_key = format!("{}/{}", config.goals_prefix(), child_id);
-                        if let Ok(Some(child_mem)) = client.get(&child_key).await {
-                            if let Ok(mut child_goal) = serde_json::from_str::<Goal>(&child_mem.value) {
-                                child_goal.state = GoalState::Abandoned {
-                                    parent_backtrack_attempt: goal.backtrack_count + 1,
-                                    abandoned_at: now,
-                                };
-                                let child_json = serde_json::to_string(&child_goal)?;
-                                client.update_memory(&child_key, &child_json, false).await?;
-                                abandoned_children.push(child_id.clone());
-                            }
+                        if abandon_goal(
+                            &client,
+                            &config.goals_prefix(),
+                            child_id,
+                            goal.backtrack_count + 1,
+                            now,
+                        ).await? {
+                            abandoned_descendants.push(child_id.clone());
                         }
                     }
 
@@ -114,7 +137,8 @@ pub async fn run(goal_id: &str, reason: Option<&str>) -> Result<()> {
                         "goal_id": goal_id,
                         "reason": reason_str,
                         "backtrack_attempt": goal.backtrack_count,
-                        "abandoned_children": abandoned_children,
+                        "abandoned_descendants": abandoned_descendants,
+                        "abandoned_count": abandoned_descendants.len(),
                         "failed_strategy": strategy,
                         "strategy_key": strategy_key,
                         "new_state": "backtracked",

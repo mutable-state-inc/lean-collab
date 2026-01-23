@@ -49,6 +49,7 @@ async fn get_goal_status(
                     "parent": goal.parent,
                     "is_leaf": goal.is_leaf(),
                     "complexity": goal.complexity(),
+                    "hypotheses": goal.hypotheses,
                     // Structural analysis
                     "has_quantifiers": goal.has_quantifiers,
                     "has_transcendentals": goal.has_transcendentals,
@@ -148,9 +149,12 @@ async fn get_theorem_summary(
     let axiomatized = counters.get("axiomatized").copied().unwrap_or(0);
     let open = counters.get("open").copied().unwrap_or(0);
     let working = counters.get("working").copied().unwrap_or(0);
+    let backtracked = counters.get("backtracked").copied().unwrap_or(0);
+    let exhausted = counters.get("exhausted").copied().unwrap_or(0);
 
-    // Ready to compose when all leaf goals are solved/axiomatized and none are open/working
-    let ready_to_compose = total > 0 && open == 0 && working == 0;
+    // Ready to compose when all leaf goals are solved/axiomatized and none need work
+    // Must check: open, working, backtracked (needs re-decomposition), exhausted (failed)
+    let ready_to_compose = total > 0 && open == 0 && working == 0 && backtracked == 0 && exhausted == 0;
 
     // Limit open_goals to available capacity (enforce max_parallel_agents at CLI level)
     let working_count = working_goals.len();

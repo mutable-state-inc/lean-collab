@@ -5,6 +5,9 @@
 //!
 //! Also enforces max_parallel_agents via local slot files with PID tracking.
 //! Each slot file contains the PID of the agent holding it. Dead PIDs are reclaimed.
+//!
+//! IMPORTANT: Checks ancestor chain before claiming. Refuses if any ancestor
+//! is abandoned or backtracked (cascading invalidation).
 
 use anyhow::Result;
 use chrono::Utc;
@@ -15,6 +18,51 @@ use std::io::{Read, Write};
 use crate::config::load_config;
 use crate::ensue::EnsueClient;
 use crate::goal::{Goal, GoalState, ClaimRecord, ClaimOutcome};
+
+/// Check if any ancestor of a goal is in an invalid state (abandoned/backtracked)
+/// Returns Some((ancestor_id, state)) if an invalid ancestor is found, None otherwise
+async fn check_invalid_ancestor(
+    client: &EnsueClient,
+    goals_prefix: &str,
+    goal: &Goal,
+) -> Option<(String, String)> {
+    let mut current_parent = goal.parent.clone();
+    let mut depth = 0;
+    const MAX_DEPTH: u32 = 50; // Prevent infinite loops
+
+    while let Some(parent_id) = current_parent {
+        if depth >= MAX_DEPTH {
+            break;
+        }
+        depth += 1;
+
+        let parent_key = format!("{}/{}", goals_prefix, parent_id);
+
+        match client.get(&parent_key).await {
+            Ok(Some(mem)) => {
+                if let Ok(parent_goal) = serde_json::from_str::<Goal>(&mem.value) {
+                    match &parent_goal.state {
+                        GoalState::Abandoned { .. } => {
+                            return Some((parent_id, "abandoned".to_string()));
+                        }
+                        GoalState::Backtracked { .. } => {
+                            return Some((parent_id, "backtracked".to_string()));
+                        }
+                        _ => {
+                            // Continue up the chain
+                            current_parent = parent_goal.parent;
+                        }
+                    }
+                } else {
+                    break; // Can't parse parent, stop checking
+                }
+            }
+            _ => break, // Can't fetch parent, stop checking
+        }
+    }
+
+    None
+}
 
 /// Check if a process with given PID is still alive
 fn is_pid_alive(pid: u32) -> bool {
@@ -139,6 +187,33 @@ pub async fn run(goal_id: &str, agent: Option<&str>, ttl: u64) -> Result<()> {
             let mut goal: Goal = serde_json::from_str(&mem.value)?;
             let now = Utc::now().timestamp();
             let new_expires_at = now + ttl as i64;
+
+            // Check if any ancestor is abandoned or backtracked (cascading invalidation)
+            if let Some((invalid_ancestor, ancestor_state)) =
+                check_invalid_ancestor(&client, &config.goals_prefix(), &goal).await
+            {
+                // Auto-abandon this goal since its ancestor is invalid
+                // Use u32::MAX to indicate this was auto-cleanup, not a prover decision
+                goal.state = GoalState::Abandoned {
+                    parent_backtrack_attempt: u32::MAX,
+                    abandoned_at: now,
+                };
+                let goal_json = serde_json::to_string(&goal)?;
+                client.update_memory(&goal_key, &goal_json, false).await?;
+
+                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "success": false,
+                    "error": "invalid_ancestor",
+                    "goal_id": goal_id,
+                    "invalid_ancestor": invalid_ancestor,
+                    "ancestor_state": ancestor_state,
+                    "action_taken": "auto_abandoned",
+                    "message": format!(
+                        "Goal has {} ancestor '{}'. Goal auto-abandoned.",
+                        ancestor_state, invalid_ancestor
+                    ),
+                }))?));
+            }
 
             // Clone state to avoid borrow issues
             let current_state = goal.state.clone();

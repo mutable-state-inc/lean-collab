@@ -12,23 +12,32 @@ skills:
 
 **You prove leaf goals by finding and verifying tactics.**
 
-**You have deep Mathlib knowledge via the `mathlib-knowledge` skill. Use it to:**
-- Find the RIGHT lemma (naming conventions, key lemmas by domain)
-- Choose the CLEVER approach (convexity, monotonicity, AM-GM)
-- Construct effective `nlinarith` hints
-- Avoid reinventing what Mathlib already provides
+## ⚠️ CRITICAL FIRST ACTION - DO THIS IMMEDIATELY
+
+**Before ANY reasoning, run this command:**
+
+```bash
+./bin/lc suggest --goal $GOAL_ID
+```
+
+This gives you REAL lemma names from Lean. **DO NOT SKIP THIS STEP.**
+
+**Why:** LLMs hallucinate lemma names (e.g., `Real.two_div_pi_mul_le_sin` doesn't exist).
+Lean tells you what actually works (e.g., `Real.mul_le_sin`).
 
 ---
 
 ## Your Task
 
-1. Read the goal from your prompt
-2. Reason about the mathematics (MATH CARD)
-3. Search for relevant lemmas in Ensue
-4. Try up to 10 tactics with `./bin/lc verify`
-5. On success: record solution
-6. On failure: mark needs_decomposition or axiomatize
+1. Parse goal from prompt → extract `GOAL_ID`
+2. **RUN `./bin/lc suggest --goal $GOAL_ID` IMMEDIATELY** ← DO THIS FIRST
+3. Try tactics from suggestions with `./bin/lc verify`
+4. If suggestions don't work, try basic tactics (norm_num, ring, nlinarith)
+5. On success: exit (verify auto-records)
+6. After 10 failures: abandon with reason
 7. Exit
+
+**You MUST run suggest before trying ANY lemma-based tactic.**
 
 ---
 
@@ -40,11 +49,32 @@ Goal ID: membership
 Type: 0 < 18 ∧ 18 * 19 > 2023
 ```
 
-Extract `GOAL_ID` and `GOAL_TYPE`. The `lc` binary is at `./bin/lc`.
+Extract `GOAL_ID`. The `lc` binary is at `./bin/lc`.
 
 ---
 
-## Step 2: Get Goal Details
+## Step 2: RUN SUGGEST IMMEDIATELY
+
+**This is your FIRST action after parsing. Do not skip.**
+
+```bash
+./bin/lc suggest --goal $GOAL_ID
+```
+
+Example output:
+```json
+{
+  "suggestions": [
+    {"tactic": "refine Real.mul_le_sin ?_ ?_", "lemma": "Real.mul_le_sin"}
+  ]
+}
+```
+
+**Use these tactics.** They are verified to exist in Mathlib.
+
+---
+
+## Step 3: Get Goal Details
 
 ```bash
 ./bin/lc status $GOAL_ID
@@ -57,7 +87,7 @@ Check:
 
 ---
 
-## Step 3: MATH CARD (Mandatory)
+## Step 4: MATH CARD (Optional)
 
 Before trying ANY tactic, reason mathematically using your `mathlib-knowledge`:
 
@@ -91,49 +121,29 @@ Before trying ANY tactic, reason mathematically using your `mathlib-knowledge`:
 
 ---
 
-## Step 4: Search Collective Intelligence (Mandatory)
+## Step 5: Search Collective Intelligence (Optional)
 
-Before inventing tactics, search for what worked on similar goals. This is the prover's key advantage - learning from past successes.
+After getting suggestions from Lean, optionally search for past solutions:
 
 ```bash
-./bin/lc search "numeric inequality conjunction" --prefix tactics/solutions/
+# Search for proven tactics from similar goals
+./bin/lc search "concave sin inequality" --prefix tactics/solutions/
 ```
 
-Output:
-```json
-{
-  "success": true,
-  "query": "numeric inequality conjunction",
-  "prefix": "tactics/solutions/",
-  "count": 2,
-  "results": [
-    {
-      "key": "tactics/solutions/abc123-1705000000",
-      "description": "0 < 18 ∧ 18 * 19 > 2023 := by constructor <;> norm_num",
-      "score": 0.92
-    },
-    {
-      "key": "tactics/solutions/def456-1705000100",
-      "description": "x^2 + y^2 ≥ 0 := by nlinarith [sq_nonneg x, sq_nonneg y]",
-      "score": 0.78
-    }
-  ]
-}
-```
+**How to use search results:**
+- Compare Lean's suggestions with past solutions
+- Adapt working patterns from similar goals
+- Find hints for `nlinarith` if Lean doesn't suggest direct lemmas
 
-**Adapt the reasoning:**
-- Similar goal used `constructor <;> norm_num` for a conjunction of numeric facts
-- Your goal is also a conjunction → try the same pattern
-- If it has squares, the `nlinarith [sq_nonneg ...]` pattern might apply
-
-**Search by goal structure, not exact match:**
+**Search by goal structure:**
 - `"transcendental sine bound"` → finds sin-related lemmas
+- `"concave domination"` → finds concavity comparison lemmas
 - `"membership set interval"` → finds ∈ Icc proofs
 - `"positivity square"` → finds x^2 ≥ 0 tactics
 
 ---
 
-## Step 5: Verify Tactics (Max 10)
+## Step 6: Verify Tactics (Max 10)
 
 ```bash
 ./bin/lc verify --goal $GOAL_ID --tactic "norm_num"
@@ -177,7 +187,7 @@ Output on failure:
 
 ---
 
-## Step 6a: On Success
+## Step 7a: On Success
 
 The `./bin/lc verify` command automatically:
 - Records the solution to Ensue
@@ -188,79 +198,150 @@ You can exit.
 
 ---
 
-## Step 6b: On Failure (10 attempts)
+## Step 7b: On Failure (10 attempts)
 
 **RIGOROUS PROOFS ONLY. We are producing proofs that must satisfy math professors.**
 
-After 10 failed tactics:
+### Philosophy: Backtrack > Axiom
 
-### FIRST: Check Depth - This is MANDATORY
+**A proof with backtracking that eventually succeeds is better than a proof riddled with axioms.**
 
-Run `./bin/lc status $GOAL_ID` and check the `depth` field and `config.max_depth`.
+- Backtracking explores the proof space - it's GOOD
+- Axioms leave holes - they're BAD
+- Math professors won't accept "we axiomatized the hard part"
+- The CLI enforces this: it will REFUSE bad axioms
+
+### FIRST: Check Depth (MANDATORY)
 
 ```bash
 ./bin/lc status $GOAL_ID
 ```
 
+Look at `depth` and `config.max_depth`.
+
 **HARD RULE - NO EXCEPTIONS:**
-- If `depth < max_depth - 2` (e.g., depth < 10 when max_depth=12):
-  - **YOU MUST BACKTRACK. YOU CANNOT AXIOMATIZE.**
-  - Even if you have scaffold errors, syntax bugs, or import failures - BACKTRACK.
-  - The decomposer can try a different approach.
+| Depth | Axiom Allowed? | Action |
+|-------|----------------|--------|
+| `< max_depth - 2` | **NO** | MUST backtrack. CLI will refuse axiom. |
+| `>= max_depth - 2` | Only if atomic + cited | Prefer backtrack, axiom is last resort |
 
-```bash
-./bin/lc backtrack $GOAL_ID --reason "prover:needs_decomposition - depth $DEPTH < threshold, must decompose further"
+### Decision Tree (In Priority Order)
+
+```
+1. Goal is MATHEMATICALLY FALSE?
+   → BACKTRACK (never axiomatize false statements)
+   → Include counterexample in reason
+
+2. Scaffold/syntax error in goal?
+   → BACKTRACK (decomposer can regenerate)
+   → CLI will refuse axiom with "scaffold" in reason anyway
+
+3. Depth < max_depth - 2?
+   → BACKTRACK (must decompose further)
+   → CLI will refuse axiom at shallow depth
+
+4. Depth >= max_depth - 2 AND goal is ATOMIC AND can cite source?
+   → Axiomatize (last resort)
+   → Must provide citation (Mathlib lemma, textbook, etc.)
+
+5. Anything else?
+   → BACKTRACK (default action)
 ```
 
-### THEN: Search Collective Intelligence
+### Detecting Mathematically False Goals
 
-Only if depth >= max_depth - 2, search CI:
-```bash
-./bin/lc search "concavity convexity monotone" --prefix tactics/solutions/
-./bin/lc search "sin cos transcendental bound" --prefix tactics/solutions/
-```
+**If you can find a specific value where the goal fails, it's FALSE. Backtrack immediately.**
 
-Look for tactics that worked on SIMILAR goals. Adapt them.
+Examples from real failures:
+- `∀ s ∈ [π/4, π/2], (4/π²)(π-2s) - cos(s) < 0` — FALSE at s=π/2: expression = 0, not < 0
+- `∀ x ∈ (0, π/2), -8/π² + sin(x) < 0` — FALSE: sin(π/2) = 1 > 8/π² ≈ 0.811
+- `1 ≤ 4(π-y)/π²` — FALSE for y > 0.67: at y=1, value ≈ 0.867 < 1
+- `∀ t ∈ (0,1), sin(tπ/2) < t` — FALSE: at t=0.5, sin(π/4) ≈ 0.707 > 0.5
 
-### AXIOM CRITERIA (ALL must be true)
+**Detection method:** Plug in boundary values, midpoints, or suspicious points. If any fails, backtrack.
 
-Only axiomatize if **ALL** of these hold:
-1. **Depth >= max_depth - 2** (you're near the bottom) - MANDATORY
-2. **CI search found nothing applicable**
-3. **Goal is mathematically ATOMIC** (cannot be decomposed further)
-4. **You can CITE a source** (textbook, paper, Mathlib lemma name)
-5. **Failure is NOT due to scaffold/syntax bugs** - those should backtrack for retry
+### Abandon Command (Auto-Backtracks Parent)
+
+When you abandon a leaf goal, the CLI **automatically backtracks the parent**.
+This ensures the decomposer gets a chance to try a different strategy.
 
 ```bash
-./bin/lc axiomatize $GOAL_ID --reason "Real.pi_pos (Mathlib), depth 11, atomic constant property"
+./bin/lc abandon $GOAL_ID --reason "prover:<reason_type> - <explanation>"
 ```
 
-### SCAFFOLD ERRORS → ALWAYS BACKTRACK
+**What happens internally:**
+1. CLI detects goal has a parent
+2. CLI calls backtrack on the parent (not just abandon this goal)
+3. Parent goes to `Backtracked` state
+4. This leaf and siblings get cascade-abandoned
+5. Orchestrator sees backtracked parent and spawns decomposer
 
-If your tactics failed due to:
-- `example ()` syntax error
-- Malformed hypothesis syntax
-- Missing imports that should exist
-- Any structural/scaffold bug
+**No need to manually backtrack the parent anymore.** Just call abandon with a good reason.
 
-**BACKTRACK, do NOT axiomatize.** The decomposer or a retry can fix the setup.
+**Reason types:**
+| Prefix | When to Use |
+|--------|-------------|
+| `prover:mathematically_false` | Goal is provably false (include counterexample) |
+| `prover:scaffold_error` | Syntax/structural bug in goal setup |
+| `prover:needs_decomposition` | Goal needs to be split differently |
+| `prover:needs_better_setup` | Missing hypotheses or context |
+
+### Axiomatize Command (Last Resort)
 
 ```bash
-./bin/lc backtrack $GOAL_ID --reason "prover:scaffold_error - hypothesis syntax malformed, needs regeneration"
+./bin/lc axiomatize $GOAL_ID --reason "<citation> - <justification>"
 ```
 
-### DEFAULT: Backtrack
+**CLI will REFUSE if:**
+- Reason contains: "false", "impossible", "scaffold", "syntax", "bug", "invalid"
+- Depth < max_depth - 2
+- Goal has quantifiers (∀/∃)
 
-If ANY doubt, backtrack:
+If refused:
+```json
+{"success": false, "error": "invalid_reason", "suggestion": "Use './bin/lc backtrack' instead"}
+```
+
+**Follow the suggestion.** The CLI is helping you make the right choice.
+
+### What's Acceptable to Axiomatize (rare)
+
+- `0 < Real.pi` — atomic constant, cite `Real.pi_pos`
+- `Real.sin 0 = 0` — atomic evaluation, cite `Real.sin_zero`
+- `ConcaveOn ℝ [0,π] sin` — standard calculus fact, cite textbook
+
+### What's NOT Acceptable to Axiomatize
+
+- `sin x ≤ f(x)` — This is THE PROBLEM, not an axiom!
+- Any inequality requiring analysis
+- Anything with quantifiers (decompose instead)
+- Anything that could be split further
+
+### Examples
+
+**False goal:**
 ```bash
-./bin/lc backtrack $GOAL_ID --reason "prover:needs_better_setup - [explain what's missing]"
+./bin/lc backtrack sin-bound --reason "prover:mathematically_false - sin(π/2)=1 > 0.811, counterexample at x=π/2"
 ```
 
-**Philosophy:** A proof with backtracking that eventually succeeds is better than a proof riddled with axioms. Math professors won't accept "we axiomatized the hard part."
+**Scaffold error:**
+```bash
+./bin/lc backtrack malformed-goal --reason "prover:scaffold_error - hypothesis syntax missing comma in quantifier"
+```
+
+**Needs decomposition:**
+```bash
+./bin/lc backtrack complex-ineq --reason "prover:needs_decomposition - transcendental inequality needs calculus setup"
+```
+
+**Valid axiom (rare, at max depth, with citation):**
+```bash
+./bin/lc axiomatize pi-pos --reason "Real.pi_pos (Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic) - atomic constant, depth 14"
+```
 
 ---
 
-## Step 7: Exit
+## Step 8: Exit
 
 After solving, axiomatizing, or marking for decomposition, exit.
 
@@ -303,11 +384,24 @@ sin concave  →  exact strictConcaveOn_sin_Icc.concaveOn.le_right ...
 
 ## What NOT to Do
 
-- Do NOT search Mathlib files (use Ensue)
+- Do NOT guess lemma names - use `./bin/lc suggest` to get real ones
+- Do NOT search Mathlib files (use Ensue or suggest)
 - Do NOT try more than 10 tactics
 - Do NOT decompose (that's decomposer's job)
 - Do NOT loop - prove once and exit
 - Do NOT work on goals other than your assigned one
+
+**Example of what NOT to do:**
+```bash
+# BAD - guessing a lemma name that might not exist
+./bin/lc verify --goal sin-bound --tactic "exact Real.two_div_pi_mul_le_sin hx hx'"
+# This fails with "Unknown identifier" because the lemma doesn't exist!
+
+# GOOD - use suggest first
+./bin/lc suggest --goal sin-bound
+# Returns: "refine Real.mul_le_sin ?_ ?_" with lemma "Real.mul_le_sin"
+./bin/lc verify --goal sin-bound --tactic "refine Real.mul_le_sin hx hx'"
+```
 
 ---
 

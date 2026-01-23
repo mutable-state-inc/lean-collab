@@ -124,12 +124,43 @@ Each goal at `proofs/{tid}/goals/{gid}` contains: `id`, `goal_type`, `state`, `d
 |-------|--------|---------|
 | `open` | — | Available for work |
 | `working` | `agent`, `claimed_at`, `expires_at` | Claimed by agent |
-| `solved` | `tactic`, `solved_at` | Proof verified |
+| `solved` | `tactic`, `imports[]`, `solved_at` | Proof verified |
 | `decomposed` | `children[]`, `strategy`, `decomposed_at` | Split into subgoals |
 | `axiom` | `justification`, `axiomatized_at` | Accepted as axiom |
 | `backtracked` | `attempt`, `backtracked_at` | Decomposition failed, retry |
 | `exhausted` | `attempts`, `exhausted_at` | All strategies failed |
-| `abandoned` | `parent_backtrack_attempt`, `abandoned_at` | Parent backtracked |
+| `abandoned` | `parent_backtrack_attempt`, `abandoned_at` | Goal invalidated (see below) |
+
+**`parent_backtrack_attempt` Values:**
+| Value | Meaning |
+|-------|---------|
+| `0` | Manual abandonment (prover called `abandon` directly) - should be rare |
+| `1-N` | Cascade from parent backtrack attempt N - normal backtrack flow |
+| `4294967295` (u32::MAX) | Auto-orphan cleanup (invalid ancestor detected during claim) |
+
+**State Transitions:**
+```
+open ──────────┬──► working ──► solved
+               │         │
+               │         └──► open (claim expired)
+               │
+               └──► (via decomposer) decomposed ──► backtracked ──► open
+                                                         │
+                                          children ──► abandoned
+
+axiom ◄── (last resort, depth >= max-2, atomic + cited)
+exhausted ◄── (all strategies failed, no more options)
+```
+
+**Do NOT Spawn Agents For:**
+- `abandoned` - Parent was backtracked; these goals are preserved for history only
+- `exhausted` - All strategies failed; requires human intervention or proof redesign
+- `solved` - Already proven
+- `axiom` - Accepted as axiom
+- `decomposed` - Already split into children (work on children instead)
+
+**Cascading Invalidation:**
+When a parent is backtracked, its direct children are abandoned. Grandchildren may still appear as `open`/`axiom`/etc., but the `claim` command will detect the invalid ancestor and auto-abandon them. This is lazy evaluation - descendants are cleaned up when accessed, not eagerly.
 
 ### Structural Analysis Flags
 
@@ -343,12 +374,36 @@ Tell the user the file path when complete so they can access it.
 | `./bin/lc decompose <gid> --children X,Y --strategy S` | Mark goal as decomposed |
 | `./bin/lc search "query" --prefix tactics/` | Search collective intelligence |
 | `./bin/lc listen` | SSE event stream |
-| `./bin/lc claim <gid>` | Claim goal (hooks use this) |
+| `./bin/lc claim <gid>` | Claim goal (**checks ancestors**, auto-abandons if invalid) |
 | `./bin/lc unclaim <gid>` | Release goal (hooks use this) |
-| `./bin/lc verify --goal <gid> --tactic <t> [--imports X,Y]` | Verify tactic (records to CI) |
-| `./bin/lc axiomatize <gid> --reason <r>` | Mark as axiom |
-| `./bin/lc backtrack <gid> [--reason <r>]` | Undo decomposition (records failure) |
+| `./bin/lc verify --goal <gid> --tactic <t> [--imports X,Y]` | Verify tactic (**returns Lean errors in `error` field**) |
+| `./bin/lc axiomatize <gid> --reason <r> [--force]` | Mark as axiom (**REFUSES invalid reasons/depth**) |
+| `./bin/lc backtrack <gid> [--reason <r>]` | Undo decomposition, abandon children |
+| `./bin/lc abandon <gid> [--reason <r>]` | Abandon goal (**auto-backtracks parent** for leaf goals) |
 | `./bin/lc compose [-o path]` | Build final proof |
+
+### CLI Validation (Enforced Automatically)
+
+**`abandon` auto-backtracks:**
+- For goals with a parent → CLI calls backtrack on parent instead
+- Parent goes to `Backtracked` state, children cascade-abandoned
+- Use `--force` to bypass (for cleanup only)
+- Root goals (no parent) are directly abandoned
+
+**`axiomatize` REFUSES if:**
+- `depth < max_depth - 2` (must decompose further)
+- Reason contains: "false", "impossible", "scaffold", "syntax", "bug"
+- Goal has quantifiers (should decompose)
+- Use `--force` to override (logged as warning)
+
+**`claim` checks ancestors:**
+- Walks up parent chain before claiming
+- If ANY ancestor is `abandoned` or `backtracked` → auto-abandons the goal
+- Returns `{"error": "invalid_ancestor", "action_taken": "auto_abandoned"}`
+
+**`verify` error handling:**
+- Lean errors now appear in `error` field (fixed bug where errors went to stdout only)
+- Check `error` field to understand WHY tactics fail
 
 ## Collective Intelligence
 
