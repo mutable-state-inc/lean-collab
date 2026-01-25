@@ -1,5 +1,7 @@
 //! Error types for lean-collab
 
+#![allow(dead_code)]
+
 use thiserror::Error;
 
 #[derive(Error, Debug)]

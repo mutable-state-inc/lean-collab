@@ -158,8 +158,8 @@ pub async fn run(goal_id: &str, agent: Option<&str>, ttl: u64) -> Result<()> {
 
     // Try to acquire a local slot (enforces max_parallel_agents)
     let slots_dir = config.slots_dir();
-    if slots_dir.exists() {
-        if acquire_slot(&slots_dir, config.max_parallel_agents, parent_pid).is_none() {
+    if slots_dir.exists()
+        && acquire_slot(&slots_dir, config.max_parallel_agents, parent_pid).is_none() {
             // No slots available - at capacity
             let result = serde_json::json!({
                 "success": false,
@@ -171,7 +171,6 @@ pub async fn run(goal_id: &str, agent: Option<&str>, ttl: u64) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&result)?);
             return Ok(());
         }
-    }
 
     // Generate unique claim ID for optimistic concurrency
     let claim_id = generate_claim_id();
@@ -201,18 +200,21 @@ pub async fn run(goal_id: &str, agent: Option<&str>, ttl: u64) -> Result<()> {
                 let goal_json = serde_json::to_string(&goal)?;
                 client.update_memory(&goal_key, &goal_json, false).await?;
 
-                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "success": false,
-                    "error": "invalid_ancestor",
-                    "goal_id": goal_id,
-                    "invalid_ancestor": invalid_ancestor,
-                    "ancestor_state": ancestor_state,
-                    "action_taken": "auto_abandoned",
-                    "message": format!(
-                        "Goal has {} ancestor '{}'. Goal auto-abandoned.",
-                        ancestor_state, invalid_ancestor
-                    ),
-                }))?));
+                return {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "success": false,
+                        "error": "invalid_ancestor",
+                        "goal_id": goal_id,
+                        "invalid_ancestor": invalid_ancestor,
+                        "ancestor_state": ancestor_state,
+                        "action_taken": "auto_abandoned",
+                        "message": format!(
+                            "Goal has {} ancestor '{}'. Goal auto-abandoned.",
+                            ancestor_state, invalid_ancestor
+                        ),
+                    }))?);
+                    Ok(())
+                };
             }
 
             // Clone state to avoid borrow issues

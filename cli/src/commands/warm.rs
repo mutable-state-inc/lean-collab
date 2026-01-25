@@ -258,7 +258,7 @@ fn sanitize_goal(goal: &str, hypothesis_names: &[&str]) -> String {
     // Fix 2: Rename bound variables in set builder notation if they conflict with hypotheses
     // Pattern: `{x | ...}` where x is in hypothesis_names -> `{x' | ...}` (add prime)
     for &name in hypothesis_names {
-        if name.len() == 1 && name.chars().next().map_or(false, |c| c.is_lowercase()) {
+        if name.len() == 1 && name.chars().next().is_some_and(|c| c.is_lowercase()) {
             // Single-letter variable name - check if it appears in set builder
             let pattern = format!("{{{}|", name);
             let pattern_space = format!("{{{} |", name);
@@ -462,8 +462,7 @@ fn handle_connection(stream: &mut UnixStream, lean_project: &Path) -> Result<()>
 pub async fn run() -> Result<()> {
     let config = load_config()?;
 
-    let lean_project = config.lean_project_root.as_ref()
-        .map(|p| p.as_path())
+    let lean_project = config.lean_project_root.as_deref()
         .unwrap_or(&config.workspace);
 
     // Remove old socket

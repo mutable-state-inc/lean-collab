@@ -30,8 +30,7 @@ fn validate_tactic_syntax(strategy: &str, config: &LoadedConfig) -> Result<(), S
         strategy
     );
 
-    let lean_project = config.lean_project_root.as_ref()
-        .map(|p| p.as_path())
+    let lean_project = config.lean_project_root.as_deref()
         .unwrap_or(&config.workspace);
 
     let output = Command::new("lake")
@@ -101,14 +100,17 @@ pub async fn run(
 
                     // Validate that the strategy is valid Lean tactic syntax
                     if let Err(validation_error) = validate_tactic_syntax(strategy, &config) {
-                        return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                            "success": false,
-                            "error": "invalid_strategy",
-                            "goal_id": goal_id,
-                            "strategy": strategy,
-                            "message": validation_error,
-                            "suggestion": "The strategy must be valid Lean tactic syntax, not natural language. Examples: 'intro x hx', 'constructor', 'by_cases h : x ≤ 0'"
-                        }))?));
+                        return {
+                            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                                "success": false,
+                                "error": "invalid_strategy",
+                                "goal_id": goal_id,
+                                "strategy": strategy,
+                                "message": validation_error,
+                                "suggestion": "The strategy must be valid Lean tactic syntax, not natural language. Examples: 'intro x hx', 'constructor', 'by_cases h : x ≤ 0'"
+                            }))?);
+                            Ok(())
+                        };
                     }
 
                     // Update state to decomposed

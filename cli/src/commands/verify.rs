@@ -119,14 +119,17 @@ pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>, skel
 
             // Check 1: Block sorry in tactics (unless skeleton mode)
             if !skeleton && tactic.to_lowercase().contains("sorry") {
-                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "success": false,
-                    "error": "sorry_rejected",
-                    "goal_id": goal_id,
-                    "message": "REJECTED: Tactic contains 'sorry'. This is not allowed. Use './bin/lc suggest' to find real lemmas, or './bin/lc abandon' if the goal cannot be proven.",
-                    "attempt_count": goal.attempt_count,
-                    "hint": "Never use 'sorry', 'have h := sorry', or 'exact sorry'. Find the actual proof or abandon the goal."
-                }))?));
+                return {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "success": false,
+                        "error": "sorry_rejected",
+                        "goal_id": goal_id,
+                        "message": "REJECTED: Tactic contains 'sorry'. This is not allowed. Use './bin/lc suggest' to find real lemmas, or './bin/lc abandon' if the goal cannot be proven.",
+                        "attempt_count": goal.attempt_count,
+                        "hint": "Never use 'sorry', 'have h := sorry', or 'exact sorry'. Find the actual proof or abandon the goal."
+                    }))?);
+                    Ok(())
+                };
             }
 
             // Check 2: Auto-abandon after MAX_ATTEMPTS
@@ -150,17 +153,20 @@ pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>, skel
                 let goal_json = serde_json::to_string(&goal)?;
                 client.update_memory(&goal_key, &goal_json, false).await?;
 
-                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "success": false,
-                    "error": "max_attempts_exceeded",
-                    "goal_id": goal_id,
-                    "attempt_count": goal.attempt_count,
-                    "max_attempts": MAX_ATTEMPTS,
-                    "new_state": "abandoned",
-                    "parent_id": goal.parent,
-                    "message": format!("Goal auto-abandoned after {} attempts. Siblings continue independently.", MAX_ATTEMPTS),
-                    "hint": "Use './bin/lc backtrack <parent>' to abandon entire decomposition if strategy is wrong.",
-                }))?));
+                return {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "success": false,
+                        "error": "max_attempts_exceeded",
+                        "goal_id": goal_id,
+                        "attempt_count": goal.attempt_count,
+                        "max_attempts": MAX_ATTEMPTS,
+                        "new_state": "abandoned",
+                        "parent_id": goal.parent,
+                        "message": format!("Goal auto-abandoned after {} attempts. Siblings continue independently.", MAX_ATTEMPTS),
+                        "hint": "Use './bin/lc backtrack <parent>' to abandon entire decomposition if strategy is wrong.",
+                    }))?);
+                    Ok(())
+                };
             }
 
             // === END EARLY REJECTION CHECKS ===
@@ -206,18 +212,21 @@ pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>, skel
 
             // In skeleton mode, don't record attempts or update state - just report
             if skeleton {
-                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "success": true,
-                    "skeleton_valid": success,
-                    "goal_id": goal_id,
-                    "tactic": tactic,
-                    "error": error_msg,
-                    "message": if success {
-                        "Skeleton compiles - architecture is valid"
-                    } else {
-                        "Skeleton failed - try different architecture"
-                    }
-                }))?));
+                return {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "success": true,
+                        "skeleton_valid": success,
+                        "goal_id": goal_id,
+                        "tactic": tactic,
+                        "error": error_msg,
+                        "message": if success {
+                            "Skeleton compiles - architecture is valid"
+                        } else {
+                            "Skeleton failed - try different architecture"
+                        }
+                    }))?);
+                    Ok(())
+                };
             }
 
             // Record strategy attempt
@@ -384,8 +393,7 @@ fn run_cold_verify(
         .with_context(|| format!("Failed to write {}", proof_file.display()))?;
 
     // Run lake env lean
-    let lean_project = config.lean_project_root.as_ref()
-        .map(|p| p.as_path())
+    let lean_project = config.lean_project_root.as_deref()
         .unwrap_or(&config.workspace);
 
     let output = Command::new("lake")

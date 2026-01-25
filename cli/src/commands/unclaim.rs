@@ -34,13 +34,16 @@ pub async fn run(goal_id: &str, agent: Option<&str>) -> Result<()> {
                 GoalState::Working { agent: current_agent, .. } => {
                     // Verify ownership (or allow unclaim if agent matches or is "unknown")
                     if current_agent != agent_id && agent_id != "unknown" {
-                        return Ok(println!("{}", serde_json::to_string(&serde_json::json!({
-                            "success": false,
-                            "error": "not_owner",
-                            "goal_id": goal_id,
-                            "current_agent": current_agent,
-                            "requesting_agent": agent_id,
-                        }))?));
+                        return {
+                            println!("{}", serde_json::to_string(&serde_json::json!({
+                                "success": false,
+                                "error": "not_owner",
+                                "goal_id": goal_id,
+                                "current_agent": current_agent,
+                                "requesting_agent": agent_id,
+                            }))?);
+                            Ok(())
+                        };
                     }
 
                     // Update claim history

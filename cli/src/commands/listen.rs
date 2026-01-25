@@ -24,7 +24,7 @@ pub async fn run(prefix: Option<&str>, output: Option<&str>) -> Result<()> {
         eprintln!("Writing events to: {}", path);
         Some(OpenOptions::new()
             .create(true)
-            .write(true)
+            
             .append(true)
             .open(path)?)
     } else {

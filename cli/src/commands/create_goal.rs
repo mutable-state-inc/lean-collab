@@ -361,7 +361,7 @@ fn detect_missing_hypotheses(goal_type: &str, hypotheses: &[String]) -> Vec<Stri
             // Check if this looks like a free variable
             let is_single_lowercase = ident.len() == 1 && ident.chars().next().unwrap().is_lowercase();
             let is_hypothesis_name = ident.starts_with('h') && ident.len() >= 2 &&
-                ident.chars().nth(1).map_or(false, |c| c.is_uppercase() || c.is_lowercase());
+                ident.chars().nth(1).is_some_and(|c| c.is_uppercase() || c.is_lowercase());
 
             if (is_single_lowercase || is_hypothesis_name)
                 && !excluded.contains(ident.as_str())

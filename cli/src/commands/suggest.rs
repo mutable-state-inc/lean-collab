@@ -31,10 +31,8 @@ pub struct Suggestion {
 fn parse_suggestions(output: &str, source: &str) -> Vec<Suggestion> {
     let mut suggestions = Vec::new();
 
-    // Pattern: "Try this:\n  [apply] refine Real.mul_le_sin ?_ ?_"
-    // Followed optionally by "-- Remaining subgoals:" and goal lines
-    let try_this_re = Regex::new(r"Try this:\s*\n\s*\[(\w+)\]\s*(.+?)(?:\n|$)").unwrap();
-    let subgoal_re = Regex::new(r"--\s*⊢\s*(.+)").unwrap();
+    // Regex for parsing [apply] or [exact] prefix - compiled once outside loop
+    let tactic_re = Regex::new(r"^\[(\w+)\]\s*(.+)$").unwrap();
 
     let lines: Vec<&str> = output.lines().collect();
     let mut i = 0;
@@ -48,7 +46,7 @@ fn parse_suggestions(output: &str, source: &str) -> Vec<Suggestion> {
                 let tactic_line = lines[i + 1].trim();
 
                 // Parse [apply] or [exact] prefix
-                if let Some(caps) = Regex::new(r"^\[(\w+)\]\s*(.+)$").unwrap().captures(tactic_line) {
+                if let Some(caps) = tactic_re.captures(tactic_line) {
                     let tactic_type = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                     let tactic = caps.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
 
@@ -274,8 +272,7 @@ fn run_cold_suggest(
     let suggest_dir = config.workspace.join("suggest");
     std::fs::create_dir_all(&suggest_dir)?;
 
-    let lean_project = config.lean_project_root.as_ref()
-        .map(|p| p.as_path())
+    let lean_project = config.lean_project_root.as_deref()
         .unwrap_or(&config.workspace);
 
     let suggest_file = suggest_dir.join(format!("{}-{}.lean", goal_id, tactic.replace("?", "")));

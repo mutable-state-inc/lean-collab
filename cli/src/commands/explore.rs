@@ -162,7 +162,7 @@ fn sanitize_goal(goal: &str, hypothesis_names: &[&str]) -> String {
 
     // Rename conflicting bound variables
     for &name in hypothesis_names {
-        if name.len() == 1 && name.chars().next().map_or(false, |c| c.is_lowercase()) {
+        if name.len() == 1 && name.chars().next().is_some_and(|c| c.is_lowercase()) {
             let pattern = format!("{{{}|", name);
             let pattern_space = format!("{{{} |", name);
             if result.contains(&pattern) || result.contains(&pattern_space) {
@@ -289,8 +289,7 @@ fn try_tactic(
     let explore_dir = std::env::temp_dir().join("lean-explore");
     std::fs::create_dir_all(&explore_dir)?;
 
-    let lean_project = config.lean_project_root.as_ref()
-        .map(|p| p.as_path())
+    let lean_project = config.lean_project_root.as_deref()
         .unwrap_or(&config.workspace);
 
     let file_path = explore_dir.join(format!("explore-{}.lean", std::process::id()));
@@ -400,8 +399,7 @@ fn get_cold_suggestions(
     let explore_dir = std::env::temp_dir().join("lean-explore");
     std::fs::create_dir_all(&explore_dir)?;
 
-    let lean_project = config.lean_project_root.as_ref()
-        .map(|p| p.as_path())
+    let lean_project = config.lean_project_root.as_deref()
         .unwrap_or(&config.workspace);
 
     for tactic in &["apply?", "exact?"] {

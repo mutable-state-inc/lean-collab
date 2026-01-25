@@ -263,6 +263,7 @@ impl Goal {
     }
 
     /// Get current claim if working and not expired
+    #[allow(dead_code)]
     pub fn current_claim(&self) -> Option<&ClaimRecord> {
         if let GoalState::Working { .. } = &self.state {
             self.claim_history.last()
@@ -272,6 +273,7 @@ impl Goal {
     }
 
     /// Get strategies that succeeded on this goal
+    #[allow(dead_code)]
     pub fn successful_strategies(&self) -> Vec<&StrategyAttempt> {
         self.strategy_attempts
             .iter()
@@ -280,6 +282,7 @@ impl Goal {
     }
 
     /// Get strategies that failed on this goal
+    #[allow(dead_code)]
     pub fn failed_strategies(&self) -> Vec<&StrategyAttempt> {
         self.strategy_attempts
             .iter()
@@ -290,6 +293,7 @@ impl Goal {
 
 /// Summary of theorem status
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct TheoremStatus {
     pub theorem_id: String,
     pub open: u32,
@@ -307,6 +311,7 @@ pub struct TheoremStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct WorkingGoalSummary {
     pub id: String,
     pub agent: String,

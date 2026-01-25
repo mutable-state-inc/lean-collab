@@ -2,7 +2,7 @@
 //!
 //! One-time cleanup for goals that were decomposed before validation was added.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::process::Command;
 
 use crate::config::{load_config, LoadedConfig};
@@ -95,8 +95,7 @@ fn validate_tactic(tactic: &str, config: &LoadedConfig) -> bool {
         tactic
     );
 
-    let lean_project = config.lean_project_root.as_ref()
-        .map(|p| p.as_path())
+    let lean_project = config.lean_project_root.as_deref()
         .unwrap_or(&config.workspace);
 
     let output = Command::new("lake")
@@ -156,9 +155,9 @@ pub async fn run(dry_run: bool) -> Result<()> {
     // Fetch and check all goals
     for chunk in key_strs.chunks(100) {
         let memories = client.get_memory(chunk).await?;
-        for (key, mem) in memories {
+        for (_key, mem) in memories {
             if let Ok(goal) = serde_json::from_str::<Goal>(&mem.value) {
-                if let GoalState::Decomposed { strategy, children, decomposed_at } = &goal.state {
+                if let GoalState::Decomposed { strategy, children: _, decomposed_at: _ } = &goal.state {
                     // Check if strategy needs fixing
                     let extracted = extract_valid_lean(strategy);
 

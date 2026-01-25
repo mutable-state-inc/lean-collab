@@ -50,47 +50,59 @@ pub async fn run(goal_id: &str, reason: Option<&str>, force: bool) -> Result<()>
                     let _ = writeln!(f, "  BLOCKED by MIN_ATTEMPTS");
                 }
                 eprintln!("[ABANDON DEBUG] BLOCKED by MIN_ATTEMPTS check");
-                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "success": false,
-                    "error": "insufficient_attempts",
-                    "goal_id": goal_id,
-                    "attempt_count": goal.attempt_count,
-                    "min_required": MIN_ATTEMPTS_FOR_ABANDON,
-                    "message": format!(
-                        "Leaf goal requires at least {} tactic attempts before abandoning. Current: {}. Try more tactics first.",
-                        MIN_ATTEMPTS_FOR_ABANDON,
-                        goal.attempt_count
-                    ),
-                    "suggestion": "Try more tactics with './bin/lc verify' before abandoning",
-                }))?));
+                return {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "success": false,
+                        "error": "insufficient_attempts",
+                        "goal_id": goal_id,
+                        "attempt_count": goal.attempt_count,
+                        "min_required": MIN_ATTEMPTS_FOR_ABANDON,
+                        "message": format!(
+                            "Leaf goal requires at least {} tactic attempts before abandoning. Current: {}. Try more tactics first.",
+                            MIN_ATTEMPTS_FOR_ABANDON,
+                            goal.attempt_count
+                        ),
+                        "suggestion": "Try more tactics with './bin/lc verify' before abandoning",
+                    }))?);
+                    Ok(())
+                };
             }
             eprintln!("[ABANDON DEBUG] PASSED MIN_ATTEMPTS check (will proceed)");
 
             // Validation: Check goal state - don't abandon already terminal states
             match &goal.state {
                 GoalState::Solved { .. } => {
-                    return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                        "success": false,
-                        "error": "already_solved",
-                        "goal_id": goal_id,
-                        "message": "Cannot abandon a solved goal",
-                    }))?));
+                    return {
+                        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                            "success": false,
+                            "error": "already_solved",
+                            "goal_id": goal_id,
+                            "message": "Cannot abandon a solved goal",
+                        }))?);
+                        Ok(())
+                    };
                 }
                 GoalState::Abandoned { .. } => {
-                    return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                        "success": false,
-                        "error": "already_abandoned",
-                        "goal_id": goal_id,
-                        "message": "Goal is already abandoned",
-                    }))?));
+                    return {
+                        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                            "success": false,
+                            "error": "already_abandoned",
+                            "goal_id": goal_id,
+                            "message": "Goal is already abandoned",
+                        }))?);
+                        Ok(())
+                    };
                 }
                 GoalState::Axiom { .. } => {
-                    return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                        "success": false,
-                        "error": "already_axiomatized",
-                        "goal_id": goal_id,
-                        "message": "Cannot abandon an axiomatized goal",
-                    }))?));
+                    return {
+                        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                            "success": false,
+                            "error": "already_axiomatized",
+                            "goal_id": goal_id,
+                            "message": "Cannot abandon an axiomatized goal",
+                        }))?);
+                        Ok(())
+                    };
                 }
                 _ => {}
             }
@@ -107,15 +119,18 @@ pub async fn run(goal_id: &str, reason: Option<&str>, force: bool) -> Result<()>
                 let goal_json = serde_json::to_string(&goal)?;
                 client.update_memory(&goal_key, &goal_json, false).await?;
 
-                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "success": true,
-                    "goal_id": goal_id,
-                    "action": "released_for_decomposition",
-                    "reason": reason_str,
-                    "new_state": "open",
-                    "message": "Goal released for decomposer. Orchestrator should route to decomposer agent.",
-                    "hint": "Goal needs decomposition, not more tactic attempts",
-                }))?));
+                return {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "success": true,
+                        "goal_id": goal_id,
+                        "action": "released_for_decomposition",
+                        "reason": reason_str,
+                        "new_state": "open",
+                        "message": "Goal released for decomposer. Orchestrator should route to decomposer agent.",
+                        "hint": "Goal needs decomposition, not more tactic attempts",
+                    }))?);
+                    Ok(())
+                };
             }
 
             // Direct abandon: just mark this goal as abandoned

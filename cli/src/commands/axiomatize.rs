@@ -23,12 +23,7 @@ const REJECTION_KEYWORDS: &[&str] = &[
 /// Check if reason contains rejection keywords (case-insensitive)
 fn contains_rejection_keyword(reason: &str) -> Option<&'static str> {
     let reason_lower = reason.to_lowercase();
-    for &keyword in REJECTION_KEYWORDS {
-        if reason_lower.contains(keyword) {
-            return Some(keyword);
-        }
-    }
-    None
+    REJECTION_KEYWORDS.iter().find(|&&keyword| reason_lower.contains(keyword)).copied().map(|v| v as _)
 }
 
 pub async fn run(goal_id: &str, reason: &str, force: bool) -> Result<()> {
@@ -49,47 +44,56 @@ pub async fn run(goal_id: &str, reason: &str, force: bool) -> Result<()> {
             // Check 1: Depth must be >= max_depth - 2
             let depth_threshold = config.max_depth.saturating_sub(2);
             if goal.depth < depth_threshold && !force {
-                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "success": false,
-                    "error": "depth_too_shallow",
-                    "goal_id": goal_id,
-                    "depth": goal.depth,
-                    "threshold": depth_threshold,
-                    "max_depth": config.max_depth,
-                    "message": format!(
-                        "REFUSED: Goal depth {} < threshold {}. Must decompose further or use --force.",
-                        goal.depth, depth_threshold
-                    ),
-                    "suggestion": "Use './bin/lc backtrack' instead to try a different decomposition."
-                }))?));
+                return {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "success": false,
+                        "error": "depth_too_shallow",
+                        "goal_id": goal_id,
+                        "depth": goal.depth,
+                        "threshold": depth_threshold,
+                        "max_depth": config.max_depth,
+                        "message": format!(
+                            "REFUSED: Goal depth {} < threshold {}. Must decompose further or use --force.",
+                            goal.depth, depth_threshold
+                        ),
+                        "suggestion": "Use './bin/lc backtrack' instead to try a different decomposition."
+                    }))?);
+                    Ok(())
+                };
             }
 
             // Check 2: Reason must not contain rejection keywords
             if let Some(keyword) = contains_rejection_keyword(reason) {
                 if !force {
-                    return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                        "success": false,
-                        "error": "invalid_reason",
-                        "goal_id": goal_id,
-                        "keyword_found": keyword,
-                        "message": format!(
-                            "REFUSED: Reason contains '{}' which indicates this should be BACKTRACKED, not axiomatized.",
-                            keyword
-                        ),
-                        "suggestion": "Use './bin/lc backtrack' to signal the parent decomposition was wrong."
-                    }))?));
+                    return {
+                        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                            "success": false,
+                            "error": "invalid_reason",
+                            "goal_id": goal_id,
+                            "keyword_found": keyword,
+                            "message": format!(
+                                "REFUSED: Reason contains '{}' which indicates this should be BACKTRACKED, not axiomatized.",
+                                keyword
+                            ),
+                            "suggestion": "Use './bin/lc backtrack' to signal the parent decomposition was wrong."
+                        }))?);
+                        Ok(())
+                    };
                 }
             }
 
             // Check 3: Goals with quantifiers should be decomposed, not axiomatized
             if goal.has_quantifiers && !force {
-                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "success": false,
-                    "error": "has_quantifiers",
-                    "goal_id": goal_id,
-                    "message": "REFUSED: Goal has quantifiers (∀/∃) and should be decomposed, not axiomatized.",
-                    "suggestion": "Use './bin/lc backtrack' to retry with proper decomposition."
-                }))?));
+                return {
+                    println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                        "success": false,
+                        "error": "has_quantifiers",
+                        "goal_id": goal_id,
+                        "message": "REFUSED: Goal has quantifiers (∀/∃) and should be decomposed, not axiomatized.",
+                        "suggestion": "Use './bin/lc backtrack' to retry with proper decomposition."
+                    }))?);
+                    Ok(())
+                };
             }
 
             // If force was used, log a warning

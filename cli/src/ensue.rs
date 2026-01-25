@@ -12,13 +12,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Default API endpoints
+#[allow(dead_code)]
 pub const DEFAULT_API_URL: &str = "https://api.ensue-network.ai";
+#[allow(dead_code)]
 pub const DEFAULT_SSE_URL: &str = "https://events.ensue-network.ai/mcp";
 
 /// Ensue API client
 #[derive(Debug, Clone)]
 pub struct EnsueClient {
     api_url: String,
+    #[allow(dead_code)]
     sse_url: String,
     api_key: String,
     client: reqwest::Client,
@@ -45,6 +48,7 @@ pub enum EmbedSource {
 
 /// Memory key metadata from list_keys
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct KeyMetadata {
     #[serde(alias = "key_name")]
     pub key: String,
@@ -60,6 +64,7 @@ pub struct KeyMetadata {
 
 /// Memory value from get_memory
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Memory {
     #[serde(alias = "key_name")]
     pub key: String,
@@ -139,11 +144,13 @@ impl EnsueClient {
     }
 
     /// Get SSE URL for streaming events
+    #[allow(dead_code)]
     pub fn sse_url(&self) -> &str {
         &self.sse_url
     }
 
     /// Get API key for SSE authentication
+    #[allow(dead_code)]
     pub fn api_key(&self) -> &str {
         &self.api_key
     }
@@ -308,6 +315,7 @@ impl EnsueClient {
     }
 
     /// Delete memories by key names (batch, 1-100 keys)
+    #[allow(dead_code)]
     pub async fn delete_memory(&self, key_names: &[&str]) -> Result<()> {
         #[derive(Serialize)]
         struct Args {

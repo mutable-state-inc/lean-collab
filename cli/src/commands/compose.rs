@@ -81,7 +81,7 @@ pub async fn run(output: Option<&str>) -> Result<()> {
 
     let proof = match root {
         Some(root_goal) => {
-            let proof_body = build_proof(&root_goal, &goals, &mut proof_errors, 1);
+            let proof_body = build_proof(root_goal, &goals, &mut proof_errors, 1);
             let imports_str = sorted_imports.iter()
                 .map(|i| format!("import {}", i))
                 .collect::<Vec<_>>()
@@ -105,7 +105,7 @@ pub async fn run(output: Option<&str>) -> Result<()> {
     std::fs::create_dir_all(&output_dir)?;
 
     let output_path = output
-        .map(|p| std::path::PathBuf::from(p))
+        .map(std::path::PathBuf::from)
         .unwrap_or_else(|| output_dir.join("proof.lean"));
 
     std::fs::write(&output_path, &proof)
