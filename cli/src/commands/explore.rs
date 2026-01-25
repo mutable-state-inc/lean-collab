@@ -12,8 +12,48 @@ use std::process::Command;
 
 use crate::config::load_config;
 use crate::ensue::EnsueClient;
-use crate::goal::Goal;
+use crate::goal::{Goal, StrategyCategory, StrategyStatus};
 use super::warm::{self, WarmRequest};
+
+/// A previous attempt on this goal (for learning from failures)
+#[derive(Debug, serde::Serialize)]
+pub struct PreviousAttempt {
+    pub strategy: String,
+    pub error: Option<String>,
+    pub ago: String,  // Human-readable time ago
+}
+
+/// Convert timestamp to human-readable "X min ago" format
+fn time_ago(timestamp: i64) -> String {
+    let now = chrono::Utc::now().timestamp();
+    let diff = now - timestamp;
+
+    if diff < 60 {
+        format!("{}s ago", diff)
+    } else if diff < 3600 {
+        format!("{}m ago", diff / 60)
+    } else if diff < 86400 {
+        format!("{}h ago", diff / 3600)
+    } else {
+        format!("{}d ago", diff / 86400)
+    }
+}
+
+/// Extract failed tactic attempts from goal history
+fn extract_failed_attempts(goal: &Goal) -> Vec<PreviousAttempt> {
+    goal.strategy_attempts
+        .iter()
+        .filter(|a| {
+            // Only show failed tactic attempts (not decompositions or axioms)
+            a.category == StrategyCategory::Tactic && a.status == StrategyStatus::Failed
+        })
+        .map(|a| PreviousAttempt {
+            strategy: a.strategy.clone(),
+            error: a.error.clone(),
+            ago: time_ago(a.attempted_at),
+        })
+        .collect()
+}
 
 /// Result of exploring a goal
 #[derive(Debug, serde::Serialize)]
@@ -22,6 +62,10 @@ pub struct ExploreResult {
     pub goal_id: String,
     pub goal_type: String,
     pub hypotheses: Vec<String>,
+
+    /// Previous failed attempts on this goal - DON'T RETRY THESE
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub previous_attempts: Vec<PreviousAttempt>,
 
     /// If a tactic was provided, what happened
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -398,8 +442,16 @@ fn get_cold_suggestions(
 }
 
 /// Generate hints based on goal structure and results
-fn generate_hints(goal: &str, hypotheses: &[String], tactic_result: &Option<TacticResult>, suggestions: &[String]) -> Vec<String> {
+fn generate_hints(goal: &str, hypotheses: &[String], tactic_result: &Option<TacticResult>, suggestions: &[String], previous_attempts: &[PreviousAttempt]) -> Vec<String> {
     let mut hints = Vec::new();
+
+    // Warn about previous failed attempts
+    if !previous_attempts.is_empty() {
+        hints.push(format!(
+            "⚠ {} previous attempt(s) failed on this goal - see previous_attempts above. DON'T retry these exact tactics!",
+            previous_attempts.len()
+        ));
+    }
 
     // Hint based on tactic result
     if let Some(ref result) = tactic_result {
@@ -486,6 +538,9 @@ pub async fn run(goal_id: &str, tactic: Option<&str>, imports: Option<Vec<String
         Some(mem) => {
             let goal: Goal = serde_json::from_str(&mem.value)?;
 
+            // Extract previous failed attempts - provers should NOT retry these
+            let previous_attempts = extract_failed_attempts(&goal);
+
             // Try tactic if provided
             let tactic_result = if let Some(t) = tactic {
                 Some(try_tactic(&config, &goal.goal_type, &goal.hypotheses, t, &imports)?)
@@ -507,12 +562,13 @@ pub async fn run(goal_id: &str, tactic: Option<&str>, imports: Option<Vec<String
             };
 
             // Generate hints
-            let hints = generate_hints(&goal.goal_type, &goal.hypotheses, &tactic_result, &suggestions);
+            let hints = generate_hints(&goal.goal_type, &goal.hypotheses, &tactic_result, &suggestions, &previous_attempts);
 
             let explore_result = ExploreResult {
                 goal_id: goal_id.to_string(),
-                goal_type: goal.goal_type,
-                hypotheses: goal.hypotheses,
+                goal_type: goal.goal_type.clone(),
+                hypotheses: goal.hypotheses.clone(),
+                previous_attempts,
                 tactic_result,
                 suggestions,
                 hints,

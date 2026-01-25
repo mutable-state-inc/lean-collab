@@ -103,7 +103,16 @@ LEAN STRATEGY:
 ```bash
 ./bin/lc explore --goal $GOAL_ID
 ```
-See: goal, hypotheses, Lean's suggestions
+See: goal, hypotheses, Lean's suggestions, **and any previous failed attempts**.
+
+### Check previous_attempts first!
+If the output includes `previous_attempts`, these tactics already failed - **DON'T retry them**:
+```json
+"previous_attempts": [
+  {"strategy": "exact Real.two_div_pi_mul_le_sin hx", "error": "Unknown constant...", "ago": "5m ago"}
+]
+```
+→ Learn from their failures and try a different approach.
 
 ### Test your approach
 ```bash
