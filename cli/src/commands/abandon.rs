@@ -1,12 +1,13 @@
-//! Manually abandon a goal (for cleanup or error recovery)
+//! Manually abandon a goal (mark as failed/exhausted)
 //!
-//! IMPORTANT: For leaf goals with a parent, this auto-backtracks the parent
-//! instead of directly abandoning. This ensures the decomposer can retry
-//! with a different strategy.
+//! Abandoning a goal does NOT cascade to siblings or backtrack the parent.
+//! Each goal is independent - siblings continue working.
 //!
-//! Direct abandon (without parent backtrack) only happens for:
-//! - Root goals (no parent)
-//! - Goals with --force flag (cleanup/error recovery)
+//! Parent backtrack should only happen when:
+//! - The decomposition strategy is proven wrong (use `./bin/lc backtrack`)
+//! - ALL children have failed (orchestrator decides)
+//!
+//! This prevents wasteful cascade-abandonment of untried siblings.
 
 use anyhow::Result;
 use chrono::Utc;
@@ -19,6 +20,15 @@ use crate::goal::{Goal, GoalState};
 const MIN_ATTEMPTS_FOR_ABANDON: u32 = 6;
 
 pub async fn run(goal_id: &str, reason: Option<&str>, force: bool) -> Result<()> {
+    // DEBUG: Log all abandon calls to a file for debugging
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("/tmp/abandon-debug.log") {
+        let _ = writeln!(f, "[{}] ABANDON: goal={}, reason={:?}, force={}",
+            chrono::Utc::now().format("%H:%M:%S"), goal_id, reason, force);
+    }
+    eprintln!("[ABANDON DEBUG] goal_id={}, reason={:?}, force={}", goal_id, reason, force);
+
     let config = load_config()?;
     let client = EnsueClient::from_config(&config);
     let goal_key = format!("{}/{}", config.goals_prefix(), goal_id);
@@ -31,7 +41,15 @@ pub async fn run(goal_id: &str, reason: Option<&str>, force: bool) -> Result<()>
             let now = Utc::now().timestamp();
 
             // Validation: Check minimum attempt count for leaf goals
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("/tmp/abandon-debug.log") {
+                let _ = writeln!(f, "  is_leaf={}, attempt_count={}, force={}", goal.is_leaf(), goal.attempt_count, force);
+            }
+            eprintln!("[ABANDON DEBUG] is_leaf={}, attempt_count={}, force={}", goal.is_leaf(), goal.attempt_count, force);
             if !force && goal.is_leaf() && goal.attempt_count < MIN_ATTEMPTS_FOR_ABANDON {
+                if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("/tmp/abandon-debug.log") {
+                    let _ = writeln!(f, "  BLOCKED by MIN_ATTEMPTS");
+                }
+                eprintln!("[ABANDON DEBUG] BLOCKED by MIN_ATTEMPTS check");
                 return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
                     "success": false,
                     "error": "insufficient_attempts",
@@ -39,13 +57,14 @@ pub async fn run(goal_id: &str, reason: Option<&str>, force: bool) -> Result<()>
                     "attempt_count": goal.attempt_count,
                     "min_required": MIN_ATTEMPTS_FOR_ABANDON,
                     "message": format!(
-                        "Leaf goal requires at least {} tactic attempts before abandoning. Current: {}. Use --force to override.",
+                        "Leaf goal requires at least {} tactic attempts before abandoning. Current: {}. Try more tactics first.",
                         MIN_ATTEMPTS_FOR_ABANDON,
                         goal.attempt_count
                     ),
                     "suggestion": "Try more tactics with './bin/lc verify' before abandoning",
                 }))?));
             }
+            eprintln!("[ABANDON DEBUG] PASSED MIN_ATTEMPTS check (will proceed)");
 
             // Validation: Check goal state - don't abandon already terminal states
             match &goal.state {
@@ -76,20 +95,31 @@ pub async fn run(goal_id: &str, reason: Option<&str>, force: bool) -> Result<()>
                 _ => {}
             }
 
-            // AUTO-BACKTRACK: If goal has a parent, backtrack parent instead
-            // This ensures the decomposer gets a chance to try a different strategy
-            if let Some(parent_id) = &goal.parent {
-                if !force {
-                    // Delegate to backtrack command on the parent
-                    let backtrack_reason = reason.unwrap_or("child_abandon");
-                    let full_reason = format!("auto_backtrack:{} - child '{}' abandoned", backtrack_reason, goal_id);
+            // SPECIAL CASE: "needs_decomposition" means THIS goal should be decomposed,
+            // not backtrack the parent. Release claim and mark for decomposer.
+            let reason_str = reason.unwrap_or("");
+            if reason_str.contains("needs_decomposition") {
+                let mut goal = goal.clone();
+                goal.state = GoalState::Open; // Release back to open for decomposer
+                // Reset attempt count so decomposer gets fresh start
+                // (tactic attempts don't apply to decomposition)
 
-                    // Call backtrack on parent (this will cascade-abandon this goal)
-                    return crate::commands::backtrack::run(parent_id, Some(&full_reason)).await;
-                }
+                let goal_json = serde_json::to_string(&goal)?;
+                client.update_memory(&goal_key, &goal_json, false).await?;
+
+                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "success": true,
+                    "goal_id": goal_id,
+                    "action": "released_for_decomposition",
+                    "reason": reason_str,
+                    "new_state": "open",
+                    "message": "Goal released for decomposer. Orchestrator should route to decomposer agent.",
+                    "hint": "Goal needs decomposition, not more tactic attempts",
+                }))?));
             }
 
-            // Direct abandon: only for root goals or when --force is used
+            // Direct abandon: just mark this goal as abandoned
+            // Siblings continue independently - no cascade
             let old_state = format!("{:?}", goal.state);
 
             let mut goal = goal; // Make mutable for update
@@ -104,16 +134,12 @@ pub async fn run(goal_id: &str, reason: Option<&str>, force: bool) -> Result<()>
             serde_json::json!({
                 "success": true,
                 "goal_id": goal_id,
-                "reason": reason.unwrap_or("manual_abandon"),
+                "reason": reason.unwrap_or("exhausted"),
                 "previous_state": old_state,
                 "new_state": "abandoned",
                 "attempt_count": goal.attempt_count,
-                "forced": force,
-                "note": if goal.parent.is_some() {
-                    "Forced abandon without parent backtrack"
-                } else {
-                    "Root goal abandoned"
-                },
+                "parent": goal.parent,
+                "note": "Goal abandoned. Siblings continue independently. Use './bin/lc backtrack <parent>' to abandon entire decomposition.",
             })
         }
         None => {

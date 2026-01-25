@@ -11,6 +11,7 @@ pub async fn run(
     _max_agents: u32,
     _max_depth: u32,
     theorem: Option<&str>,
+    hypotheses: Option<&str>,
     create_root: bool,
 ) -> Result<()> {
     // Load and validate config
@@ -43,13 +44,18 @@ pub async fn run(
             let goal = Goal::analyze("root", goal_type, 0, None);
             let now = Utc::now().timestamp();
 
+            // Parse hypotheses: split by ";;" and filter empty strings
+            let hyps: Vec<String> = hypotheses
+                .map(|h| h.split(";;").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default();
+
             let goal_json = serde_json::json!({
                 "id": "root",
                 "goal_type": goal_type,
                 "state": { "state": "open" },
                 "depth": 0,
                 "parent": null,
-                "hypotheses": [],
+                "hypotheses": hyps,
 
                 "has_quantifiers": goal.has_quantifiers,
                 "has_transcendentals": goal.has_transcendentals,

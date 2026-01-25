@@ -10,6 +10,14 @@ use crate::config::load_config;
 use crate::ensue::EnsueClient;
 
 pub async fn run(query: &str, prefix: Option<&str>, limit: u32) -> Result<()> {
+    // Log all searches for debugging collective intelligence usage
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("/tmp/search-debug.log") {
+        let _ = writeln!(f, "[{}] SEARCH: query={:?}, prefix={:?}, limit={}",
+            chrono::Utc::now().format("%H:%M:%S"), query, prefix, limit);
+    }
+
     let config = load_config()?;
     let client = EnsueClient::from_config(&config);
 
@@ -27,6 +35,12 @@ pub async fn run(query: &str, prefix: Option<&str>, limit: u32) -> Result<()> {
     } else {
         results
     };
+
+    // Log results count
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/search-debug.log") {
+        use std::io::Write;
+        let _ = writeln!(f, "  -> Found {} results", filtered.len());
+    }
 
     let result = serde_json::json!({
         "success": true,

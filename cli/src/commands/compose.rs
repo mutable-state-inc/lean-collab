@@ -344,7 +344,9 @@ fn build_proof(goal: &Goal, all_goals: &[Goal], errors: &mut Vec<String>, depth:
             let bullet_continuation_indent = format!("{}  ", indent); // indent for continuation lines after bullet
 
             for child in active_children {
-                let child_proof = build_proof(child, all_goals, errors, depth + 1);
+                // Only increment depth for bulleted children; single child stays at same level
+                let child_depth = if needs_bullets { depth + 1 } else { depth };
+                let child_proof = build_proof(child, all_goals, errors, child_depth);
                 if needs_bullets {
                     // Add bullet point and properly indent multi-line child proofs
                     let trimmed = child_proof.trim_start();

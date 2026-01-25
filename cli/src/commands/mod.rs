@@ -7,6 +7,7 @@ pub mod claim;
 pub mod compose;
 pub mod create_goal;
 pub mod decompose;
+pub mod explore;
 pub mod fix_strategies;
 pub mod init;
 pub mod listen;

@@ -34,6 +34,10 @@ enum Commands {
         #[arg(long)]
         theorem: Option<String>,
 
+        /// Hypotheses for the theorem (;; separated). Example: "color : Type → Bool;;h : ∀ x, P x"
+        #[arg(long)]
+        hypotheses: Option<String>,
+
         /// Create root goal and subscribe to it
         #[arg(long)]
         create_root: bool,
@@ -102,6 +106,10 @@ enum Commands {
         /// Lean imports needed (comma-separated, e.g., "Mathlib.Tactic,Mathlib.Data.Real.Basic")
         #[arg(long, value_delimiter = ',')]
         imports: Option<Vec<String>>,
+
+        /// Skeleton mode - allows sorry, just checks types (for decomposer architecture validation)
+        #[arg(long, default_value = "false")]
+        skeleton: bool,
     },
 
     /// Build final composed proof from all solved goals
@@ -142,8 +150,8 @@ enum Commands {
 
     /// Manually abandon a goal (for cleanup or error recovery)
     ///
-    /// Requires at least 10 tactic attempts for leaf goals before abandoning.
-    /// Use --force to override (for cleanup/error recovery only).
+    /// Requires at least 6 tactic attempts for leaf goals before abandoning.
+    /// The --force flag is for admin cleanup only, not for agents.
     Abandon {
         /// The goal ID to abandon
         goal_id: String,
@@ -214,6 +222,12 @@ enum Commands {
         /// Use --no-inherit-hypotheses to disable (rarely needed).
         #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
         inherit_hypotheses: bool,
+
+        /// Check for similar/duplicate goals using embeddings before creating.
+        /// Detects circular decompositions and redundant goals.
+        /// Blocks creation if similarity > 92%, warns if > 85%.
+        #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
+        check_similar: bool,
     },
 
     /// Search collective intelligence for tactics or strategies
@@ -262,6 +276,28 @@ enum Commands {
         imports: Option<Vec<String>>,
     },
 
+    /// Interactive tactic exploration - REPL-like proof development
+    ///
+    /// Combines goal state, suggestions, and tactic execution.
+    /// Try a tactic and see the resulting goal state instead of just pass/fail.
+    ///
+    /// Examples:
+    ///   lc explore --goal X                     # See state + suggestions
+    ///   lc explore --goal X --tactic "simp"     # Try tactic, see what remains
+    Explore {
+        /// The goal ID to explore
+        #[arg(long)]
+        goal: String,
+
+        /// Tactic to try (optional - omit to just see state and suggestions)
+        #[arg(long)]
+        tactic: Option<String>,
+
+        /// Lean imports needed (default: Mathlib + common analysis)
+        #[arg(long, value_delimiter = ',')]
+        imports: Option<Vec<String>>,
+    },
+
     /// Start warm server to keep Lean/Mathlib loaded
     ///
     /// Runs a background server that accepts suggestion requests.
@@ -299,8 +335,9 @@ async fn main() -> Result<()> {
             max_agents,
             max_depth,
             theorem,
+            hypotheses,
             create_root,
-        } => init::run(max_agents, max_depth, theorem.as_deref(), create_root).await,
+        } => init::run(max_agents, max_depth, theorem.as_deref(), hypotheses.as_deref(), create_root).await,
 
         Commands::Listen { prefix, output } => listen::run(prefix.as_deref(), output.as_deref()).await,
 
@@ -310,7 +347,7 @@ async fn main() -> Result<()> {
 
         Commands::Unclaim { goal_id, agent } => unclaim::run(&goal_id, agent.as_deref()).await,
 
-        Commands::Verify { goal, tactic, imports } => verify::run(&goal, &tactic, imports).await,
+        Commands::Verify { goal, tactic, imports, skeleton } => verify::run(&goal, &tactic, imports, skeleton).await,
 
         Commands::Compose { output } => compose::run(output.as_deref()).await,
 
@@ -333,9 +370,10 @@ async fn main() -> Result<()> {
             depth,
             hypotheses,
             inherit_hypotheses,
+            check_similar,
         } => {
             let parsed_hypotheses = parse_hypotheses(hypotheses.as_deref());
-            create_goal::run(&id, &goal_type, parent.as_deref(), depth, parsed_hypotheses, inherit_hypotheses).await
+            create_goal::run(&id, &goal_type, parent.as_deref(), depth, parsed_hypotheses, inherit_hypotheses, check_similar).await
         }
 
         Commands::Search { query, prefix, limit } => search::run(&query, prefix.as_deref(), limit).await,
@@ -343,6 +381,8 @@ async fn main() -> Result<()> {
         Commands::FixStrategies { dry_run } => fix_strategies::run(dry_run).await,
 
         Commands::Suggest { goal, tactics, imports } => suggest::run(&goal, tactics, imports).await,
+
+        Commands::Explore { goal, tactic, imports } => explore::run(&goal, tactic.as_deref(), imports).await,
 
         Commands::Warm => warm::run().await,
     };

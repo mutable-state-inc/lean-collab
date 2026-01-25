@@ -21,6 +21,10 @@ pub enum Complexity {
     Analytical,
     /// Has quantifiers, must decompose
     Structural,
+    /// Cannot determine syntactically - Claude must use judgment to classify
+    /// At shallow depth: likely needs decomposition
+    /// At deep depth: likely provable, try tactics first
+    NeedsJudgment,
 }
 
 /// Outcome of a claim (what happened while agent held the goal)
@@ -220,6 +224,7 @@ impl Goal {
     }
 
     /// Compute complexity based on structural analysis
+    /// Returns Unknown for cases that need Claude's judgment
     pub fn complexity(&self) -> Complexity {
         if self.is_numeric {
             Complexity::Trivial
@@ -228,7 +233,10 @@ impl Goal {
         } else if self.has_transcendentals {
             Complexity::Analytical
         } else {
-            Complexity::Decidable
+            // Cannot determine syntactically - Claude must use judgment
+            // At shallow depth: likely needs decomposition (e.g., "color P = color 0")
+            // At deep depth: likely a leaf, try tactics first
+            Complexity::NeedsJudgment
         }
     }
 
@@ -238,8 +246,20 @@ impl Goal {
     }
 
     /// Check if goal can potentially be decomposed further
+    ///
+    /// Returns true if decomposition is possible (not at max depth).
+    /// For Unknown complexity, returns true to let Claude decide.
     pub fn can_decompose(&self, max_depth: u32) -> bool {
-        self.depth < max_depth && self.has_quantifiers
+        if self.depth >= max_depth {
+            return false;
+        }
+
+        // For known complex types, definitely can decompose
+        // For NeedsJudgment, also return true - Claude will decide if needed
+        matches!(
+            self.complexity(),
+            Complexity::Analytical | Complexity::Structural | Complexity::NeedsJudgment
+        )
     }
 
     /// Get current claim if working and not expired

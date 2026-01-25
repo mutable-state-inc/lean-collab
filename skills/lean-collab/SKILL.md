@@ -15,6 +15,76 @@ description: "Collaborative theorem proving orchestrator. Uses lc CLI for state,
 - **KEEP RUNNING** until compose succeeds
 - **If goals are working (not open) → KEEP WAITING** for new goals to appear
 
+## CORE PHILOSOPHY: THINK FIRST, COMPILE SECOND
+
+**We combine the LLM's mathematical reasoning with Lean's verification to avoid wasted attempts.**
+
+### The Problem We Solved
+
+The old suggest-first approach fails for complex goals:
+- `suggest` only finds direct lemma applications
+- Module arithmetic, geometry, abstract types have no single-lemma solutions
+- Guessing 10 tactics wastes verification cycles
+
+### The Solution: LLM Intelligence + Lean Verification
+
+| What LLMs Do Best | What Lean Does Best |
+|-------------------|---------------------|
+| Proof architecture design | Type checking |
+| Creative strategies | Finding direct lemmas |
+| Understanding math concepts | Verification |
+| Multi-step reasoning | Detecting sorry/errors |
+
+**Workflow:**
+1. **LLM THINKS** about the math (MATH CARD / ARCHITECTURE CARD)
+2. **LLM DESIGNS** the proof skeleton with `sorry` placeholders
+3. **Lean VALIDATES** the skeleton compiles (`--skeleton` flag)
+4. **Only then** create subgoals or verify final tactics
+
+### Skeleton Verification (NEW)
+
+Before decomposing, validate your architecture compiles:
+
+```bash
+./bin/lc verify --goal $GOAL_ID --tactic "have h1 : <subgoal1> := sorry; have h2 : <subgoal2> := sorry; <final_step>" --skeleton
+```
+
+If skeleton fails → try different architecture BEFORE creating subgoals.
+If skeleton passes → safe to decompose.
+
+### Reasoning Cards (Required for Complex Goals)
+
+**MATH CARD (Prover - for complex tactics):**
+```
+┌─MATH─────────────────────────────────────────┐
+│ GOAL: <the goal>                              │
+├──────────────────────────────────────────────┤
+│ CLASS: <arith/analytical/geometric/etc>       │
+│ KEY:   <core mathematical insight>            │
+│ WHY:   <why this insight applies>             │
+├──────────────────────────────────────────────┤
+│ TACTICS: <candidate tactics based on insight> │
+│ PATTERN: <Lean pattern to follow>             │
+└──────────────────────────────────────────────┘
+```
+
+**ARCHITECTURE CARD (Decomposer - before creating subgoals):**
+```
+┌─ARCHITECTURE────────────────────────────────────────┐
+│ GOAL: <the goal>                                     │
+│ PROOF IDEA: <1-2 sentence description>               │
+│ KEY INSIGHT: <what mathematical fact makes this work>│
+│ SUBGOALS:                                            │
+│   1. <subgoal1> - because: <why needed>              │
+│   2. <subgoal2> - because: <why needed>              │
+│ ASSEMBLY: <how subgoals combine>                     │
+│ LEAN SKETCH: have h1 := sorry; have h2 := sorry; ... │
+│ POTENTIAL ISSUES: <circular deps? missing hyps?>     │
+└──────────────────────────────────────────────────────┘
+```
+
+---
+
 ## PROOF RIGOR PHILOSOPHY
 
 **We produce proofs that satisfy math professors. Axioms are unacceptable shortcuts.**
@@ -77,7 +147,18 @@ When you spawn an agent in the background, do NOT read its output file. Instead,
 **You are running from the plugin directory. The `lc` binary is at `./bin/lc`.**
 
 ```bash
-./bin/lc init --create-root --theorem "<theorem statement>"
+./bin/lc init --create-root \
+  --theorem "<theorem goal statement>" \
+  --hypotheses "<hyp1>;;hyp2;;..."
+```
+
+**CRITICAL:** The `--hypotheses` flag is required for theorems with assumptions. Without it, child goals won't have access to the theorem's hypotheses and proofs will fail.
+
+Example for Putnam B1:
+```bash
+./bin/lc init --create-root \
+  --theorem "∃ c : Bool, ∀ P : EuclideanSpace ℝ (Fin 2), color P = c" \
+  --hypotheses "color : EuclideanSpace ℝ (Fin 2) → Bool;;h : ∀ (s : Affine.Simplex ℝ (EuclideanSpace ℝ (Fin 2)) 2), (∀ i j : Fin 3, color (s.points i) = color (s.points j)) → color s.circumcenter = color (s.points 0)"
 ```
 
 Output:
@@ -175,11 +256,39 @@ CLI detects these syntactically from `goal_type`:
 ### Complexity (Computed)
 
 ```
-is_numeric         → Trivial
-has_quantifiers    → Structural
-has_transcendentals → Analytical
-otherwise          → Decidable
+is_numeric          → Trivial         (prover: norm_num, decide)
+has_quantifiers     → Structural      (decomposer: intro, cases)
+has_transcendentals → Analytical      (decomposer: calculus setup)
+otherwise           → NeedsJudgment   (YOU MUST CLASSIFY - see below)
 ```
+
+### Classifying NeedsJudgment Complexity
+
+When `complexity: "needs_judgment"`, **YOU must analyze the goal** before spawning. Don't guess - think:
+
+```
+┌─CLASSIFY────────────────────────────────────────┐
+│ GOAL: <goal_type>                                │
+│ HYPOTHESES: <list them>                          │
+├──────────────────────────────────────────────────┤
+│ Q1: Can any hypothesis directly prove this?      │
+│ Q2: Do I need to CONSTRUCT something first?      │
+│ Q3: Is this a single tactic or multi-step?       │
+├──────────────────────────────────────────────────┤
+│ VERDICT: SIMPLE → prover | COMPLEX → decomposer  │
+└──────────────────────────────────────────────────┘
+```
+
+**Examples:**
+
+| Goal | Hypotheses | Verdict | Why |
+|------|------------|---------|-----|
+| `2 + 2 = 4` | none | SIMPLE | arithmetic |
+| `color P = color 0` | `h : monochromatic simplex → ...` | COMPLEX | need to construct simplices |
+| `x ∈ S` | `hx : x ∈ S` | SIMPLE | direct hypothesis |
+| `P ∧ Q` | `hP : P`, `hQ : Q` | SIMPLE | constructor with both available |
+| `f x = g x` | `h : ∀ y, f y = g y` | SIMPLE | direct apply |
+| `dist A B = dist C D` | geometric setup | COMPLEX | likely needs construction |
 
 ---
 
@@ -275,17 +384,30 @@ Returns: `goal_type`, `state`, `depth`, `hypotheses`, `has_quantifiers`, `has_tr
 1. state is "backtracked"?
    → decomposer (try different strategy)
 
-2. has_quantifiers is true?
-   → decomposer (needs intro/cases/constructor)
+2. complexity is "needs_judgment"?
+   → Check DEPTH first:
+     a) depth >= 3 → prover FIRST (try ≥3 tactics before giving up)
+     b) depth < 3  → YOU CLASSIFY (see below)
+   → At deeper depths, goals are likely leaves that just need the right tactic
+   → At shallow depths, goals often need decomposition
 
-3. is_numeric is true?
-   → prover (norm_num, decide)
+3. can_decompose is TRUE and complexity is NOT needs_judgment?
+   → decomposer (goal needs to be split)
 
-4. has_transcendentals is true?
-   → Apply TRANSCENDENTAL PHILOSOPHY (see below)
-
-5. Otherwise → prover
+4. can_decompose is FALSE?
+   → prover (goal is a leaf, try tactics)
 ```
+
+**The CLI computes `can_decompose` based on:**
+- Depth limit (can't decompose at max depth)
+- Complexity (structural/analytical/needs_judgment → can decompose)
+- Quantifiers (∀/∃ → needs intro/cases)
+
+**IMPORTANT:** When `complexity: "needs_judgment"`:
+- **At depth ≥ 3:** Send to prover first. These are likely provable leaves. The prover MUST try at least 3 different tactics before abandoning.
+- **At depth < 3:** Use your judgment with the CLASSIFY card. Shallow goals often need decomposition.
+
+This prevents the failure mode where agents decompose endlessly without ever trying to prove anything.
 
 ### Transcendental Philosophy
 
@@ -302,19 +424,25 @@ When `has_transcendentals` is true, ask: **"Point evaluation or behavior analysi
 
 ### Quick Reference
 
-| `has_quantifiers` | `is_numeric` | `has_transcendentals` | `state` | → Agent |
-|-------------------|--------------|----------------------|---------|---------|
-| — | — | — | backtracked | decomposer |
-| true | — | — | open | decomposer |
-| false | true | — | open | prover |
-| false | false | true | open | **see philosophy above** |
-| false | false | false | open | prover |
+| `state` | `complexity` | `depth` | → Agent |
+|---------|--------------|---------|---------|
+| backtracked | — | — | decomposer |
+| open/working | `needs_judgment` | ≥ 3 | **prover** (try ≥3 tactics first) |
+| open/working | `needs_judgment` | < 3 | **YOU CLASSIFY** → likely decomposer |
+| open/working | structural/analytical | — | decomposer |
+| open/working | trivial | — | prover |
+
+**When `complexity: "needs_judgment"` at depth ≥ 3:** Send to prover. Don't overthink it - deeper goals are usually leaves that need the right tactic found.
+
+**When `complexity: "needs_judgment"` at depth < 3:** Use the CLASSIFY card. Shallow goals often need decomposition before proving.
 
 ---
 
 ## Spawning Agents
 
 **Use `run_in_background=true` for parallelism.**
+
+### Decomposer Spawn
 
 ```
 Task(
@@ -324,13 +452,28 @@ Task(
 )
 ```
 
+### Prover Spawn
+
+**Just pass goal context. The prover agent has REPL exploration instructions.**
+
 ```
 Task(
   subagent_type="lean-collab:lean-prover",
-  prompt="Goal ID: membership\nType: 0 < 18",
+  prompt="Goal ID: <id>
+Goal: <goal_type>
+Hypotheses:
+<hyp1>
+<hyp2>
+...",
   run_in_background=true
 )
 ```
+
+The prover will:
+1. Think about the math approach
+2. Use `./bin/lc explore` to test tactics and see remaining goals
+3. Iterate based on Lean feedback
+4. Verify when complete or abandon if stuck
 
 **Spawn multiple in ONE message for parallelism.**
 
@@ -367,16 +510,16 @@ Tell the user the file path when complete so they can access it.
 
 | Command | Purpose |
 |---------|---------|
-| `./bin/lc init --create-root --theorem "..."` | Setup + create root goal |
+| `./bin/lc init --create-root --theorem "..." --hypotheses "..."` | Setup + create root goal with hypotheses |
 | `./bin/lc status` | Theorem summary with open/working goals |
 | `./bin/lc status <gid>` | Full goal details |
-| `./bin/lc create-goal --id X --type T --depth D` | Create goal (auto-subscribes) |
+| `./bin/lc create-goal --id X --goal-type T --depth D` | Create goal (auto-subscribes, **checks for duplicates**) |
 | `./bin/lc decompose <gid> --children X,Y --strategy S` | Mark goal as decomposed |
 | `./bin/lc search "query" --prefix tactics/` | Search collective intelligence |
 | `./bin/lc listen` | SSE event stream |
 | `./bin/lc claim <gid>` | Claim goal (**checks ancestors**, auto-abandons if invalid) |
 | `./bin/lc unclaim <gid>` | Release goal (hooks use this) |
-| `./bin/lc verify --goal <gid> --tactic <t> [--imports X,Y]` | Verify tactic (**returns Lean errors in `error` field**) |
+| `./bin/lc verify --goal <gid> --tactic <t> [--imports X,Y] [--skeleton]` | Verify tactic (**`--skeleton` allows sorry for architecture validation**) |
 | `./bin/lc axiomatize <gid> --reason <r> [--force]` | Mark as axiom (**REFUSES invalid reasons/depth**) |
 | `./bin/lc backtrack <gid> [--reason <r>]` | Undo decomposition, abandon children |
 | `./bin/lc abandon <gid> [--reason <r>]` | Abandon goal (**auto-backtracks parent** for leaf goals) |
@@ -384,11 +527,18 @@ Tell the user the file path when complete so they can access it.
 
 ### CLI Validation (Enforced Automatically)
 
-**`abandon` auto-backtracks:**
-- For goals with a parent → CLI calls backtrack on parent instead
-- Parent goes to `Backtracked` state, children cascade-abandoned
-- Use `--force` to bypass (for cleanup only)
-- Root goals (no parent) are directly abandoned
+**`create-goal` checks for duplicates/circular decompositions (NEW):**
+- Uses embeddings to find similar existing goals
+- **Blocks** if similarity > 92% (likely duplicate or circular)
+- **Warns** if similarity > 85% (suspicious)
+- Detects circular decompositions (child goal equivalent to ancestor)
+- Use `--check-similar=false` to disable (not recommended)
+
+**`abandon` does NOT cascade:**
+- Abandoning a goal only affects that goal
+- Siblings continue working independently
+- Parent stays in `decomposed` state
+- Use `./bin/lc backtrack <parent>` to abandon entire decomposition strategy
 
 **`axiomatize` REFUSES if:**
 - `depth < max_depth - 2` (must decompose further)

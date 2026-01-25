@@ -1,10 +1,7 @@
 ---
 name: lean-composer
 description: "Composes final proof from solved goals."
-tools:
-  - Bash
-  - Read
-  - Edit
+tools: Bash, Read, Edit
 ---
 
 # Lean Composer Agent

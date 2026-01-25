@@ -226,6 +226,77 @@ Before calling `./bin/lc create-goal`, verify:
 
 ---
 
+## 🚨 Commonly Hallucinated Lemmas → Correct Names
+
+**LLMs frequently guess lemma names that don't exist.** Use `./bin/lc suggest` to get real ones, or consult this table.
+
+### Set/Metric Theory
+
+| WRONG (Hallucinated) | CORRECT (Mathlib) | Notes |
+|---------------------|-------------------|-------|
+| `Metric.Sphere.infinite` | `Metric.sphere_infinite` | Lowercase, underscore |
+| `Set.Infinite.diff` | `Set.Infinite.diff` | Check signature - needs `Finite` second arg |
+| `Set.infinite_sphere` | `Metric.sphere_infinite` | In Metric namespace |
+| `Metric.sphere.nonempty` | `Metric.nonempty_sphere` | Prefix not suffix |
+| `Set.Infinite.inter` | `Set.Infinite.inter_of_left` | Needs side specification |
+
+### Geometry/Euclidean
+
+| WRONG (Hallucinated) | CORRECT (Mathlib) | Notes |
+|---------------------|-------------------|-------|
+| `EuclideanGeometry.sphere_infinite` | `Metric.sphere_infinite` | It's in Metric |
+| `Affine.Simplex.circumcenter` | `Affine.Simplex.circumcenter` | ✓ exists, check args |
+| `circumcenter_mem_sphere` | `Affine.Simplex.circumsphere_center_eq_circumcenter` | Different name |
+| `Simplex.monochromatic` | N/A | You need to define this |
+
+### Trigonometry
+
+| WRONG (Hallucinated) | CORRECT (Mathlib) | Notes |
+|---------------------|-------------------|-------|
+| `Real.sin_le_one` | `Real.sin_le_one` | ✓ exists |
+| `Real.two_div_pi_mul_le_sin` | `Real.two_div_pi_mul_le_sin` | ✓ exists (Jordan) |
+| `sin_pos_of_pos_of_lt_pi` | `Real.sin_pos_of_pos_of_lt_pi` | Need `Real.` prefix |
+| `sin_nonneg_of_nonneg_of_le_pi` | `Real.sin_nonneg_of_nonneg_of_le_pi` | Need `Real.` prefix |
+| `cos_pos_of_mem_Ioo` | `Real.cos_pos_of_mem_Ioo` | Need `Real.` prefix |
+
+### Cardinality/Finiteness
+
+| WRONG (Hallucinated) | CORRECT (Mathlib) | Notes |
+|---------------------|-------------------|-------|
+| `Finset.card_le_three` | N/A | Use `Finset.card_le_of_subset` |
+| `Set.nontrivial_of_card_ge_two` | `Set.nontrivial_of_two_le_card` | Reversed name |
+| `Finite.of_card_le` | `Set.Finite.of_card_le` | Need `Set.` prefix |
+
+### Convexity/Concavity
+
+| WRONG (Hallucinated) | CORRECT (Mathlib) | Notes |
+|---------------------|-------------------|-------|
+| `ConcaveOn.sin` | `strictConcaveOn_sin_Icc` | Different structure |
+| `concave_sin_Icc` | `strictConcaveOn_sin_Icc.concaveOn` | Need `.concaveOn` |
+| `ConvexOn.le_right` | `ConvexOn.le_right_of_lt_left` | Full name needed |
+
+### General Patterns
+
+**Naming conventions in Mathlib:**
+- `snake_case` not `camelCase` for lemmas
+- Prefix with namespace: `Real.sin_zero` not `sin_zero`
+- Predicates often have `_of_` for implications: `sin_pos_of_pos`
+- Interval versions often have `_Icc`, `_Ioo` suffix
+
+**When you get "unknown identifier":**
+```bash
+# 1. ALWAYS try suggest first
+./bin/lc suggest --goal $GOAL_ID
+
+# 2. Search for similar patterns
+./bin/lc search "sphere infinite" --prefix tactics/
+
+# 3. Check the actual Mathlib namespace (in Lean REPL)
+#check @Metric.sphere_infinite  -- see the real signature
+```
+
+---
+
 ## Quick Reference
 
 ```lean

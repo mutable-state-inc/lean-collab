@@ -4,6 +4,10 @@
 //! - tactics/solutions/{goal_hash} for semantic search
 //!
 //! Uses warm server if running for faster verification.
+//!
+//! ENFORCES:
+//! - No sorry in tactics (rejected before verification)
+//! - Max 10 attempts per goal (auto-abandons after limit)
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -16,6 +20,9 @@ use crate::ensue::{CreateMemoryItem, EmbedSource, EnsueClient};
 use crate::goal::{ClaimOutcome, Goal, GoalState, StrategyAttempt, StrategyCategory, StrategyStatus};
 use super::warm::{self, VerifyRequest, WarmRequest};
 
+/// Maximum tactic attempts before auto-abandoning a goal
+const MAX_ATTEMPTS: u32 = 10;
+
 /// Hash a goal type for strategy lookup
 fn hash_goal_type(goal_type: &str) -> String {
     let mut hasher = DefaultHasher::new();
@@ -23,26 +30,35 @@ fn hash_goal_type(goal_type: &str) -> String {
     format!("{:x}", hasher.finish())
 }
 
+/// Default imports for verification - used when no imports specified
+fn default_verify_imports() -> Vec<String> {
+    vec![
+        "Mathlib.Tactic".to_string(),
+        "Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic".to_string(),
+        "Mathlib.Analysis.SpecialFunctions.Trigonometric.Bounds".to_string(),
+        "Mathlib.Analysis.Real.Pi.Bounds".to_string(),
+        "Mathlib.Analysis.Calculus.Deriv.Basic".to_string(),
+        "Mathlib.Analysis.Convex.Function".to_string(),
+        "Mathlib.Analysis.Convex.SpecificFunctions.Deriv".to_string(),
+        "Mathlib.Topology.Order.Basic".to_string(),
+    ]
+}
+
 /// Generate a proper Lean verification file with imports and context
 fn generate_lean_code(goal_id: &str, goal: &Goal, tactic: &str, imports: &[String]) -> String {
     let mut code = String::new();
 
-    // Use provided imports, or default to Mathlib.Tactic plus commonly needed modules
-    if imports.is_empty() {
-        code.push_str("import Mathlib.Tactic\n");
-        code.push_str("import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic\n");
-        code.push_str("import Mathlib.Analysis.SpecialFunctions.Trigonometric.Bounds\n");
-        code.push_str("import Mathlib.Analysis.Real.Pi.Bounds\n");
-        code.push_str("import Mathlib.Analysis.Calculus.Deriv.Basic\n");
-        code.push_str("import Mathlib.Analysis.Convex.Function\n");
-        code.push_str("import Mathlib.Analysis.Convex.SpecificFunctions.Deriv\n");
-        code.push_str("import Mathlib.Topology.Order.Basic\n\n");
+    // Use provided imports, or default imports
+    let actual_imports = if imports.is_empty() {
+        default_verify_imports()
     } else {
-        for imp in imports {
-            code.push_str(&format!("import {}\n", imp));
-        }
-        code.push('\n');
+        imports.to_vec()
+    };
+
+    for imp in &actual_imports {
+        code.push_str(&format!("import {}\n", imp));
     }
+    code.push('\n');
 
     // Build the example signature with hypotheses
     // Filter out empty strings that may have been stored
@@ -81,7 +97,11 @@ fn generate_lean_code(goal_id: &str, goal: &Goal, tactic: &str, imports: &[Strin
     header + &code
 }
 
-pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>) -> Result<()> {
+/// Run verification
+///
+/// If `skeleton` is true, allows `sorry` in the tactic - used by decomposer to validate
+/// proof architecture before committing to subgoals. Does NOT record attempts or update state.
+pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>, skeleton: bool) -> Result<()> {
     let config = load_config()?;
     let client = EnsueClient::from_config(&config);
     let goal_key = format!("{}/{}", config.goals_prefix(), goal_id);
@@ -94,6 +114,56 @@ pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>) -> R
         Some(mem) => {
             let mut goal: Goal = serde_json::from_str(&mem.value)?;
             let now = Utc::now().timestamp();
+
+            // === EARLY REJECTION CHECKS (before any verification) ===
+
+            // Check 1: Block sorry in tactics (unless skeleton mode)
+            if !skeleton && tactic.to_lowercase().contains("sorry") {
+                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "success": false,
+                    "error": "sorry_rejected",
+                    "goal_id": goal_id,
+                    "message": "REJECTED: Tactic contains 'sorry'. This is not allowed. Use './bin/lc suggest' to find real lemmas, or './bin/lc abandon' if the goal cannot be proven.",
+                    "attempt_count": goal.attempt_count,
+                    "hint": "Never use 'sorry', 'have h := sorry', or 'exact sorry'. Find the actual proof or abandon the goal."
+                }))?));
+            }
+
+            // Check 2: Auto-abandon after MAX_ATTEMPTS
+            // NOTE: Does NOT cascade to parent - siblings continue independently
+            if goal.attempt_count >= MAX_ATTEMPTS {
+                // Auto-transition to abandoned state
+                goal.state = GoalState::Abandoned {
+                    abandoned_at: now,
+                    parent_backtrack_attempt: goal.backtrack_count,
+                };
+
+                // Update claim history
+                if let Some(last_claim) = goal.claim_history.last_mut() {
+                    if last_claim.released_at.is_none() {
+                        last_claim.released_at = Some(now);
+                        last_claim.outcome = Some(ClaimOutcome::Released);
+                    }
+                }
+
+                // Save the abandoned state
+                let goal_json = serde_json::to_string(&goal)?;
+                client.update_memory(&goal_key, &goal_json, false).await?;
+
+                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "success": false,
+                    "error": "max_attempts_exceeded",
+                    "goal_id": goal_id,
+                    "attempt_count": goal.attempt_count,
+                    "max_attempts": MAX_ATTEMPTS,
+                    "new_state": "abandoned",
+                    "parent_id": goal.parent,
+                    "message": format!("Goal auto-abandoned after {} attempts. Siblings continue independently.", MAX_ATTEMPTS),
+                    "hint": "Use './bin/lc backtrack <parent>' to abandon entire decomposition if strategy is wrong.",
+                }))?));
+            }
+
+            // === END EARLY REJECTION CHECKS ===
 
             // Check if warm server is running
             let use_warm = warm::is_server_running();
@@ -110,9 +180,14 @@ pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>) -> R
 
                 match warm::send_verify_request(&req) {
                     Ok(resp) => {
+                        // In skeleton mode, allow sorry - we're just checking types
                         let tactic_has_sorry = tactic.to_lowercase().contains("sorry");
-                        let final_success = resp.success && !tactic_has_sorry;
-                        let final_error = if tactic_has_sorry {
+                        let final_success = if skeleton {
+                            resp.success // Allow sorry in skeleton mode
+                        } else {
+                            resp.success && !tactic_has_sorry
+                        };
+                        let final_error = if !skeleton && tactic_has_sorry {
                             Some("Tactic contains 'sorry' - this is not a valid proof".to_string())
                         } else {
                             resp.error
@@ -121,13 +196,29 @@ pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>) -> R
                     }
                     Err(e) => {
                         eprintln!("Warm server error: {}, falling back to cold run", e);
-                        run_cold_verify(&config, goal_id, &goal, tactic, &imports)?
+                        run_cold_verify(&config, goal_id, &goal, tactic, &imports, skeleton)?
                     }
                 }
             } else {
                 // Cold run
-                run_cold_verify(&config, goal_id, &goal, tactic, &imports)?
+                run_cold_verify(&config, goal_id, &goal, tactic, &imports, skeleton)?
             };
+
+            // In skeleton mode, don't record attempts or update state - just report
+            if skeleton {
+                return Ok(println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "success": true,
+                    "skeleton_valid": success,
+                    "goal_id": goal_id,
+                    "tactic": tactic,
+                    "error": error_msg,
+                    "message": if success {
+                        "Skeleton compiles - architecture is valid"
+                    } else {
+                        "Skeleton failed - try different architecture"
+                    }
+                }))?));
+            }
 
             // Record strategy attempt
             goal.strategy_attempts.push(StrategyAttempt {
@@ -143,9 +234,15 @@ pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>) -> R
 
             if success {
                 // Update goal state to Solved
+                // Use default imports if none were provided - ensures composed proofs have all needed imports
+                let solved_imports = if imports.is_empty() {
+                    default_verify_imports()
+                } else {
+                    imports.clone()
+                };
                 goal.state = GoalState::Solved {
                     tactic: tactic.to_string(),
-                    imports: imports.clone(),
+                    imports: solved_imports,
                     solved_at: now,
                 };
 
@@ -201,11 +298,24 @@ pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>) -> R
                 let error_str = error_msg.clone().unwrap_or_else(|| "Unknown error".to_string());
 
                 // Check if error is "Unknown identifier" - if so, auto-run suggest
-                let suggestions = if error_str.contains("unknown identifier") ||
-                                     error_str.contains("Unknown identifier") ||
-                                     error_str.contains("unknown constant") {
+                let is_unknown_id = error_str.contains("unknown identifier") ||
+                                    error_str.contains("Unknown identifier") ||
+                                    error_str.contains("unknown constant");
+
+                let suggestions = if is_unknown_id {
                     // Run suggest to help prover find real lemmas
                     get_suggestions_for_goal(&goal)
+                } else {
+                    None
+                };
+
+                // Extract the unknown identifier name from error message
+                let unknown_id = if is_unknown_id {
+                    // Pattern: "unknown identifier 'Foo.bar'" or "unknown identifier `Foo.bar`"
+                    let re = regex::Regex::new(r"unknown (?:identifier|constant)\s*[`']([^`']+)[`']").ok();
+                    re.and_then(|r| r.captures(&error_str))
+                      .and_then(|c| c.get(1))
+                      .map(|m| m.as_str().to_string())
                 } else {
                     None
                 };
@@ -221,10 +331,20 @@ pub async fn run(goal_id: &str, tactic: &str, imports: Option<Vec<String>>) -> R
                     "warm_server": use_warm,
                 });
 
-                // Add suggestions if we found any
-                if let Some(ref sugg) = suggestions {
-                    result["hint"] = serde_json::json!("Unknown lemma. Try these real lemmas from Lean:");
-                    result["suggestions"] = serde_json::json!(sugg);
+                // Add suggestions and guidance for unknown identifier errors
+                if is_unknown_id {
+                    if let Some(ref id) = unknown_id {
+                        result["unknown_identifier"] = serde_json::json!(id);
+                        result["hint"] = serde_json::json!(format!(
+                            "Lemma '{}' doesn't exist. Run: ./bin/lc suggest --goal {} to find real lemmas. DO NOT guess names.",
+                            id, goal_id
+                        ));
+                    } else {
+                        result["hint"] = serde_json::json!("Unknown lemma. Run: ./bin/lc suggest --goal to find real lemmas from Lean.");
+                    }
+                    if let Some(ref sugg) = suggestions {
+                        result["suggestions"] = serde_json::json!(sugg);
+                    }
                 }
 
                 result
@@ -250,6 +370,7 @@ fn run_cold_verify(
     goal: &Goal,
     tactic: &str,
     imports: &[String],
+    skeleton: bool,
 ) -> Result<(bool, Option<String>, String)> {
     // Create temp lean file in workspace
     let proof_dir = config.workspace.join("proofs");
@@ -281,18 +402,22 @@ fn run_cold_verify(
     let stdout_has_error = stdout.contains("error:") || stdout.contains("Error:");
     let lean_success = exit_success && !stdout_has_error;
 
-    // Check for sorry
+    // Check for sorry (skip in skeleton mode - we expect sorry there)
     let tactic_has_sorry = tactic.to_lowercase().contains("sorry");
     let output_has_sorry = stdout.to_lowercase().contains("sorry")
         || stderr.to_lowercase().contains("sorry")
         || stderr.contains("declaration uses 'sorry'");
 
-    let success = lean_success && !tactic_has_sorry && !output_has_sorry;
+    let success = if skeleton {
+        lean_success // In skeleton mode, allow sorry - just check types
+    } else {
+        lean_success && !tactic_has_sorry && !output_has_sorry
+    };
 
-    // Build error message
-    let error_msg = if tactic_has_sorry {
+    // Build error message (don't report sorry as error in skeleton mode)
+    let error_msg = if !skeleton && tactic_has_sorry {
         Some("Tactic contains 'sorry' - this is not a valid proof".to_string())
-    } else if output_has_sorry {
+    } else if !skeleton && output_has_sorry {
         Some("Proof uses 'sorry' - this is not a valid proof".to_string())
     } else if !stderr.trim().is_empty() {
         Some(stderr.to_string())

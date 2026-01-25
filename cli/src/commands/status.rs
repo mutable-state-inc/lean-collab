@@ -13,7 +13,7 @@ pub async fn run(goal_id: Option<&str>, _watch: bool) -> Result<()> {
 
     if let Some(gid) = goal_id {
         // Get specific goal status
-        let goal_status = get_goal_status(&client, &config.goals_prefix(), gid).await?;
+        let goal_status = get_goal_status(&client, &config.goals_prefix(), gid, config.max_depth).await?;
         println!("{}", serde_json::to_string_pretty(&goal_status)?);
     } else {
         // Get theorem-level summary
@@ -28,6 +28,7 @@ async fn get_goal_status(
     client: &EnsueClient,
     goals_prefix: &str,
     goal_id: &str,
+    max_depth: u32,
 ) -> Result<serde_json::Value> {
     let key = format!("{}/{}", goals_prefix, goal_id);
 
@@ -49,6 +50,7 @@ async fn get_goal_status(
                     "parent": goal.parent,
                     "is_leaf": goal.is_leaf(),
                     "complexity": goal.complexity(),
+                    "can_decompose": goal.can_decompose(max_depth),
                     "hypotheses": goal.hypotheses,
                     // Structural analysis
                     "has_quantifiers": goal.has_quantifiers,
@@ -125,6 +127,8 @@ async fn get_theorem_summary(
                             open_goals.push(serde_json::json!({
                                 "id": goal.id,
                                 "depth": goal.depth,
+                                "complexity": goal.complexity(),
+                                "can_decompose": goal.can_decompose(config.max_depth),
                                 "has_quantifiers": goal.has_quantifiers,
                                 "attempt_count": goal.attempt_count,
                             }));
@@ -153,13 +157,19 @@ async fn get_theorem_summary(
     let exhausted = counters.get("exhausted").copied().unwrap_or(0);
 
     // Ready to compose when all leaf goals are solved/axiomatized and none need work
-    // Must check: open, working, backtracked (needs re-decomposition), exhausted (failed)
-    let ready_to_compose = total > 0 && open == 0 && working == 0 && backtracked == 0 && exhausted == 0;
+    // Must check: open, working, backtracked (needs re-decomposition), exhausted (failed), abandoned (failed)
+    // If ANY goal is abandoned, the proof is incomplete - don't report ready to compose
+    let abandoned = counters.get("abandoned").copied().unwrap_or(0);
+    let ready_to_compose = total > 0 && open == 0 && working == 0 && backtracked == 0 && exhausted == 0 && abandoned == 0;
 
     // Limit open_goals to available capacity (enforce max_parallel_agents at CLI level)
     let working_count = working_goals.len();
     let available_capacity = (config.max_parallel_agents as usize).saturating_sub(working_count);
     let claimable_goals: Vec<_> = open_goals.into_iter().take(available_capacity).collect();
+
+    // Detect "stuck" state: no work to do, but proof is incomplete
+    // This happens when children are abandoned but parent hasn't been backtracked
+    let is_stuck = open == 0 && working == 0 && abandoned > 0 && !ready_to_compose;
 
     Ok(serde_json::json!({
         "success": true,
@@ -176,6 +186,12 @@ async fn get_theorem_summary(
             "abandoned": counters.get("abandoned").copied().unwrap_or(0),
         },
         "ready_to_compose": ready_to_compose,
+        "is_stuck": is_stuck,
+        "stuck_hint": if is_stuck {
+            Some("Proof is stuck: goals abandoned but no work available. Backtrack parent goals to try different strategies.")
+        } else {
+            None
+        },
         "open_goals": claimable_goals,
         "open_goals_total": open,
         "available_capacity": available_capacity,

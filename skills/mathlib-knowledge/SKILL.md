@@ -1,41 +1,37 @@
 ---
 name: mathlib-knowledge
-description: "Deep Mathlib and mathematical reasoning knowledge for lean-prover agents."
+description: "Mathlib reference for lean-prover agents. Use AFTER MATH CARD analysis."
 ---
 
-# Mathlib Knowledge Base
+# Mathlib Reference
 
-**This skill provides strategic mathematical knowledge. Use it to find the RIGHT lemma and the CLEVER approach.**
-
----
-
-## Core Philosophy
-
-1. **Don't reinvent** - Mathlib has 99% of what you need
-2. **Name patterns matter** - Lemmas follow predictable naming conventions
-3. **Work backwards** - Know your target form, find lemmas that produce it
-4. **Hypothesis hunting** - Most lemmas need specific hypotheses; gather them first
+**This is a REFERENCE, not a decision tree. Use it AFTER your MATH CARD analysis to find the right tactic.**
 
 ---
 
-## Tactic Decision Tree
+## How to Use This Skill
 
-```
-GOAL TYPE                           → FIRST TRY
-─────────────────────────────────────────────────
-Pure numeric (0 < 5, 3 * 4 = 12)   → norm_num
-Decidable prop (finite check)       → decide, native_decide
-Equality with ring ops              → ring, ring_nf
-Linear arithmetic (ℤ, ℕ, ℚ)        → omega
-Polynomial inequality               → polyrith (needs import)
-Nonlinear with hints                → nlinarith [hint1, hint2]
-Set membership                      → simp, exact ⟨_, _⟩
-Trivial from hypothesis             → exact h, assumption
-Rewrite needed                      → rw [lemma], simp only [lemma]
-Function application                → apply lemma, refine lemma ?_ ?_
-Split conjunction                   → constructor, ⟨_, _⟩
-Existential                         → use witness, refine ⟨witness, ?_⟩
-```
+1. Complete MATH CARD analysis first (understand what hypotheses you need to use)
+2. Based on your analysis, consult this reference for:
+   - Tactic syntax for your approach
+   - Lemma names that match your strategy
+   - Common patterns for your goal structure
+
+**Never pattern-match goal type → tactic blindly. Always reason first.**
+
+---
+
+## Tactic Reference
+
+| When your analysis shows... | Tactic |
+|-----------------------------|--------|
+| Pure computation needed | `norm_num`, `decide` |
+| Ring/field algebra | `ring`, `field_simp` |
+| Linear arithmetic | `omega`, `linarith` |
+| Nonlinear with known bounds | `nlinarith [hints]` |
+| Need to use a hypothesis | `exact h`, `apply h`, `rw [h]` |
+| Need to construct a pair/tuple | `exact ⟨_, _⟩`, `constructor` |
+| Need to provide a witness | `use witness`, `refine ⟨w, ?_⟩` |
 
 ---
 

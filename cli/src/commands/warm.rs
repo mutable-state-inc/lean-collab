@@ -93,11 +93,20 @@ fn generate_code(req: &WarmRequest) -> String {
     code.push('\n');
 
     let valid_hyps: Vec<_> = req.hypotheses.iter().filter(|h| !h.trim().is_empty()).collect();
+
+    // Extract hypothesis names for sanitization
+    let hyp_names: Vec<&str> = valid_hyps.iter()
+        .filter_map(|h| h.split(':').next().map(|s| s.trim()))
+        .collect();
+
+    // Sanitize the goal to fix parsing issues
+    let sanitized_goal = sanitize_goal(&req.goal, &hyp_names);
+
     if valid_hyps.is_empty() {
-        code.push_str(&format!("example : {} := by\n  {}\n", req.goal, req.tactic));
+        code.push_str(&format!("example : {} := by\n  {}\n", sanitized_goal, req.tactic));
     } else {
         let hyp_str = valid_hyps.iter().map(|h| format!("({})", h)).collect::<Vec<_>>().join(" ");
-        code.push_str(&format!("example {} : {} := by\n  {}\n", hyp_str, req.goal, req.tactic));
+        code.push_str(&format!("example {} : {} := by\n  {}\n", hyp_str, sanitized_goal, req.tactic));
     }
 
     code
@@ -179,6 +188,97 @@ fn handle_suggest(req: WarmRequest, lean_project: &Path) -> WarmResponse {
     }
 }
 
+/// Sanitize a goal type to fix common parsing issues:
+/// 1. Replace `} \ {` (set difference operator) with explicit Set.diff calls
+/// 2. Rename bound variables in set builder notation that conflict with hypothesis names
+fn sanitize_goal(goal: &str, hypothesis_names: &[&str]) -> String {
+    let mut result = goal.to_string();
+
+    // Fix 1: Convert set difference operator to Set.diff
+    // Pattern: `expr1 \ expr2` -> `Set.diff expr1 expr2`
+    // Handle the common case: `{...} \ {...}`
+    while let Some(backslash_pos) = result.find(" \\ {") {
+        // Find the start of the first set (look back for matching `{`)
+        let before = &result[..backslash_pos];
+
+        // Use char_indices to handle Unicode correctly
+        let char_positions: Vec<(usize, char)> = before.char_indices().collect();
+        let mut brace_count = 0;
+        let mut start_byte = None;
+
+        // Iterate backwards through characters
+        for &(byte_pos, c) in char_positions.iter().rev() {
+            match c {
+                '}' => brace_count += 1,
+                '{' => {
+                    brace_count -= 1;
+                    if brace_count == 0 {
+                        start_byte = Some(byte_pos);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Find the end of the second set (look forward for matching `}`)
+        // " \\ {" is 4 bytes
+        let after_backslash_start = backslash_pos + 4;
+        let after_backslash = &result[after_backslash_start..];
+        let mut brace_count = 1; // We already consumed the opening `{`
+        let mut end_byte = None;
+
+        for (byte_offset, c) in after_backslash.char_indices() {
+            match c {
+                '{' => brace_count += 1,
+                '}' => {
+                    brace_count -= 1;
+                    if brace_count == 0 {
+                        // End is after this `}`
+                        end_byte = Some(after_backslash_start + byte_offset + c.len_utf8());
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let (Some(s), Some(e)) = (start_byte, end_byte) {
+            let set1 = &result[s..backslash_pos];
+            // set2 includes the opening `{` which starts at backslash_pos + 3
+            let set2 = &result[backslash_pos + 3..e];
+            let replacement = format!("(Set.diff {} {})", set1, set2);
+            result = format!("{}{}{}", &result[..s], replacement, &result[e..]);
+        } else {
+            // Can't parse, give up on this transformation
+            break;
+        }
+    }
+
+    // Fix 2: Rename bound variables in set builder notation if they conflict with hypotheses
+    // Pattern: `{x | ...}` where x is in hypothesis_names -> `{x' | ...}` (add prime)
+    for &name in hypothesis_names {
+        if name.len() == 1 && name.chars().next().map_or(false, |c| c.is_lowercase()) {
+            // Single-letter variable name - check if it appears in set builder
+            let pattern = format!("{{{}|", name);
+            let pattern_space = format!("{{{} |", name);
+            if result.contains(&pattern) || result.contains(&pattern_space) {
+                // Rename the bound variable by adding a prime
+                let new_name = format!("{}'", name);
+                result = result.replace(&pattern, &format!("{{{}|", new_name));
+                result = result.replace(&pattern_space, &format!("{{{} |", new_name));
+                // Also replace uses of the variable in the body (simple heuristic)
+                // This is imperfect but catches common cases
+                result = result.replace(&format!(" {} ", name), &format!(" {} ", new_name));
+                result = result.replace(&format!(" {})", name), &format!(" {})", new_name));
+                result = result.replace(&format!("({} ", name), &format!("({} ", new_name));
+            }
+        }
+    }
+
+    result
+}
+
 /// Generate Lean code for verify request
 fn generate_verify_code(req: &VerifyRequest) -> String {
     let imports = if req.imports.is_empty() {
@@ -191,6 +291,9 @@ fn generate_verify_code(req: &VerifyRequest) -> String {
             "Mathlib.Analysis.Convex.Function".to_string(),
             "Mathlib.Analysis.Convex.SpecificFunctions.Deriv".to_string(),
             "Mathlib.Topology.Order.Basic".to_string(),
+            // Geometry imports for simplex/circumcenter problems
+            "Mathlib.Geometry.Euclidean.Circumcenter".to_string(),
+            "Mathlib.Analysis.InnerProductSpace.EuclideanDist".to_string(),
         ]
     } else {
         req.imports.clone()
@@ -203,11 +306,20 @@ fn generate_verify_code(req: &VerifyRequest) -> String {
     code.push('\n');
 
     let valid_hyps: Vec<_> = req.hypotheses.iter().filter(|h| !h.trim().is_empty()).collect();
+
+    // Extract hypothesis names for sanitization
+    let hyp_names: Vec<&str> = valid_hyps.iter()
+        .filter_map(|h| h.split(':').next().map(|s| s.trim()))
+        .collect();
+
+    // Sanitize the goal to fix parsing issues
+    let sanitized_goal = sanitize_goal(&req.goal, &hyp_names);
+
     if valid_hyps.is_empty() {
-        code.push_str(&format!("example : {} := by\n  {}\n", req.goal, req.tactic));
+        code.push_str(&format!("example : {} := by\n  {}\n", sanitized_goal, req.tactic));
     } else {
         let hyp_str = valid_hyps.iter().map(|h| format!("({})", h)).collect::<Vec<_>>().join(" ");
-        code.push_str(&format!("example {} : {} := by\n  {}\n", hyp_str, req.goal, req.tactic));
+        code.push_str(&format!("example {} : {} := by\n  {}\n", hyp_str, sanitized_goal, req.tactic));
     }
 
     code
@@ -220,7 +332,8 @@ fn handle_verify(req: VerifyRequest, lean_project: &Path) -> VerifyResponse {
     match run_lean(&code, lean_project) {
         Ok((output, time_ms)) => {
             // Check for errors in output
-            let has_error = output.contains("error:") || output.contains("Error:");
+            // Note: Lean4 errors can be in formats like "error:" or "error(lean.unknownIdentifier):"
+            let has_error = output.contains("error:") || output.contains("Error:") || output.contains("error(");
             let has_sorry = output.to_lowercase().contains("sorry");
 
             let success = !has_error && !has_sorry;
@@ -228,9 +341,9 @@ fn handle_verify(req: VerifyRequest, lean_project: &Path) -> VerifyResponse {
             let error = if has_sorry {
                 Some("Proof uses 'sorry' - not a valid proof".to_string())
             } else if has_error {
-                // Extract just the error message
+                // Extract just the error message (handles both "error:" and "error(type):" formats)
                 Some(output.lines()
-                    .filter(|l| l.contains("error:") || l.contains("Error:"))
+                    .filter(|l| l.contains("error:") || l.contains("Error:") || l.contains("error("))
                     .take(3)
                     .collect::<Vec<_>>()
                     .join("\n"))
