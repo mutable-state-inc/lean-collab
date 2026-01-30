@@ -28,10 +28,6 @@ eventsource-client = "0.12"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
-
-# Cross-platform paths
-directories = "5.0"
 
 # Async stream utilities
 futures = "0.3"

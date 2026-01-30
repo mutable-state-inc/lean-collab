@@ -81,8 +81,6 @@ pub struct LoadedConfig {
     pub max_parallel_agents: u32,
     pub max_depth: u32,
     pub claim_ttl_seconds: u64,
-    #[allow(dead_code)]
-    pub plugin_root: PathBuf,
     pub workspace: PathBuf,
     pub lean_project_root: Option<PathBuf>,
 }
@@ -91,18 +89,6 @@ impl LoadedConfig {
     /// Ensue key prefix for this theorem's goals
     pub fn goals_prefix(&self) -> String {
         format!("proofs/{}/goals", self.theorem_id)
-    }
-
-    /// Ensue key prefix for this theorem's claims
-    #[allow(dead_code)]
-    pub fn claims_prefix(&self) -> String {
-        format!("proofs/{}/claims", self.theorem_id)
-    }
-
-    /// Ensue key prefix for strategies
-    #[allow(dead_code)]
-    pub fn strategies_prefix(&self) -> String {
-        "strategies".to_string()
     }
 
     /// Local slots directory for flock semaphore
@@ -165,7 +151,6 @@ pub fn load_config() -> Result<LoadedConfig> {
         max_parallel_agents,
         max_depth,
         claim_ttl_seconds,
-        plugin_root,
         workspace,
         lean_project_root,
     })

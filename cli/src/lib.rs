@@ -6,11 +6,9 @@
 
 pub mod config;
 pub mod ensue;
-pub mod error;
 pub mod goal;
 
 // Re-export commonly used types
 pub use config::Config;
 pub use ensue::EnsueClient;
-pub use error::{Error, Result};
 pub use goal::{Goal, GoalState, Complexity};

@@ -4,7 +4,6 @@ use clap::{Parser, Subcommand};
 mod commands;
 mod config;
 mod ensue;
-mod error;
 mod goal;
 
 use commands::*;

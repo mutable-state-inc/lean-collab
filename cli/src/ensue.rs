@@ -11,18 +11,13 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Default API endpoints
-#[allow(dead_code)]
-pub const DEFAULT_API_URL: &str = "https://api.ensue-network.ai";
-#[allow(dead_code)]
+/// Default SSE endpoint for streaming events
 pub const DEFAULT_SSE_URL: &str = "https://events.ensue-network.ai/mcp";
 
 /// Ensue API client
 #[derive(Debug, Clone)]
 pub struct EnsueClient {
     api_url: String,
-    #[allow(dead_code)]
-    sse_url: String,
     api_key: String,
     client: reqwest::Client,
 }
@@ -48,35 +43,17 @@ pub enum EmbedSource {
 
 /// Memory key metadata from list_keys
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct KeyMetadata {
     #[serde(alias = "key_name")]
     pub key: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub size: Option<u64>,
-    #[serde(default)]
-    pub created_at: Option<i64>,
-    #[serde(default)]
-    pub updated_at: Option<i64>,
 }
 
 /// Memory value from get_memory
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct Memory {
     #[serde(alias = "key_name")]
     pub key: String,
     pub value: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub size: Option<u64>,
-    #[serde(default)]
-    pub created_at: Option<i64>,
-    #[serde(default)]
-    pub updated_at: Option<i64>,
 }
 
 /// Search result (includes value)
@@ -132,7 +109,6 @@ impl EnsueClient {
     pub fn new(api_url: &str, api_key: &str) -> Self {
         Self {
             api_url: api_url.trim_end_matches('/').to_string(),
-            sse_url: DEFAULT_SSE_URL.to_string(),
             api_key: api_key.to_string(),
             client: reqwest::Client::new(),
         }
@@ -141,18 +117,6 @@ impl EnsueClient {
     /// Create client from LoadedConfig
     pub fn from_config(config: &crate::config::LoadedConfig) -> Self {
         Self::new(&config.ensue_api_url, &config.ensue_api_key)
-    }
-
-    /// Get SSE URL for streaming events
-    #[allow(dead_code)]
-    pub fn sse_url(&self) -> &str {
-        &self.sse_url
-    }
-
-    /// Get API key for SSE authentication
-    #[allow(dead_code)]
-    pub fn api_key(&self) -> &str {
-        &self.api_key
     }
 
     /// Make a JSON-RPC call to the Ensue API
