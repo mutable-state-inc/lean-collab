@@ -133,14 +133,6 @@ The CLI uses `lake env lean` to verify tactics against your Lean project. This r
 2. The project must build successfully with `lake build`
 3. Mathlib must be installed (use `lake exe cache get` for speed)
 
-For faster verification, start the warm server:
-
-```bash
-./bin/lc warm &
-```
-
-This keeps Mathlib loaded in memory. First request takes ~20s, subsequent requests ~2-5s.
-
 ## CLI Reference
 
 ### Session Management
@@ -185,9 +177,25 @@ This keeps Mathlib loaded in memory. First request takes ~20s, subsequent reques
 
 ## Running with Claude
 
-### Starting a Session
+### 1. Start the Warm Server
 
-From the plugin directory:
+Before running Claude, start the warm server in a separate terminal:
+
+```bash
+cd /path/to/lean-collab-plugin
+./bin/lc warm
+```
+
+Keep this terminal open. The warm server:
+- Loads Mathlib into memory once (~20s initial load)
+- Dramatically speeds up tactic verification (~2-5s vs ~20s per verification)
+- Listens on `/tmp/lean-warm.sock`
+
+Without the warm server, each verification cold-starts Lean and reloads Mathlib, which is very slow.
+
+### 2. Start Claude
+
+From the plugin directory (in a new terminal):
 
 ```bash
 claude \
@@ -196,7 +204,7 @@ claude \
     --dangerously-skip-permissions
 ```
 
-### Invoking the Skill
+### 3. Invoke the Skill
 
 Once Claude is running, start the collaborative proving process:
 
