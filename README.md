@@ -79,7 +79,7 @@ Get an API key from [ensue.dev](https://ensue.dev).
 ### 1. Clone and Build the CLI
 
 ```bash
-git clone https://github.com/mutable-state-inc/lean-collab-plugin
+git clone git@github.com:mutable-state-inc/lean-collab.git
 cd lean-collab-plugin
 make install
 ```
